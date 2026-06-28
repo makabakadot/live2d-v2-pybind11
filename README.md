@@ -208,7 +208,7 @@ Live2DModelRender::Live2DModelRender(std::shared_ptr<Render> render)
 
 # 2.在Visual studio中使用Pybind11绑定的live2dv2
 
-改为生成动态库，Pybind11相关语法可见B站,如大佬项目使用C++17
+改为生成动态库，Pybind11相关语法可见B站,请使用C++17(因为使用u8path处理中文字符)
 
 需要设定包含目录有：
 
