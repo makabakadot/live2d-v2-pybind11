@@ -2,9 +2,13 @@
 本项目来自Arkueid大佬[live2d-py](https://github.com/EasyLive2D/live2d-py/commits?author=Arkueid)项目的v2Cpp。与之不同的是采用Pybind11连接Python与C++而不是Cpython Api。并在源代码基础上修复了现版本可能存在的内存泄漏问题，以及将渲染独立出来方便重写。
 
 Dependence中是默认C++ openGl的依赖，没有添加Pybind11的include，编译前记得加上
+
 Live2dSource是v2Cpp自定义改造后的源码，Header和Cpp分离，方便导入，Pybind11绑定的代码是Binding.cpp
+
 PythonCode是Python端测试的代码，自定义使用moderngl渲染
+
 V2_independent_Render是vs项目，可参考其中依赖
+
 # 1. 修改
 ## 1.1 GC
 除部分类中创建的未回收外，原v2Cpp中似乎未对 ```BinaryRender.mObject``` 的项目进行回收，怀疑会导致内存泄漏。本项目在```L2DBaseModel```中添加了
