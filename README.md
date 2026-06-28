@@ -1,5 +1,10 @@
 # 介绍
-本项目来自[Arkueid](https://github.com/EasyLive2D/live2d-py/commits?author=Arkueid)大佬的v2Cpp。与之不同的是采用Pybind11连接Python与C++而不是Cython Api。并在大佬的基础上修复了可能存在的内存泄漏问题，以及将渲染独立出来方便重写。
+本项目来自Arkueid大佬的[live2d-py](https://github.com/EasyLive2D/live2d-py/commits?author=Arkueid)的v2Cpp。与之不同的是采用Pybind11连接Python与C++而不是Cython Api。并在大佬的基础上修复了可能存在的内存泄漏问题，以及将渲染独立出来方便重写。
+
+Dependence中是默认C++ openGl的依赖，没有添加Pybind11的include，编译前记得加上
+Live2dSource是v2Cpp自定义改造后的源码，Header和Cpp分离，方便导入
+PythonCode是Python端测试的代码，自定义使用moderngl渲染
+V2_independent_Render是vs项目，可参考其中依赖
 # 1. 修改
 ## 1.1 GC
 除部分类中创建的未回收外，原v2Cpp中似乎未对 ```BinaryRender.mObject``` 的项目进行回收，怀疑会导致内存泄漏。本项目在```L2DBaseModel```中添加了
@@ -58,7 +63,7 @@ public:
     int type;//为了RTTI
     static void ISerializableRelease(void* ptr);//释放函数,详见代码
 };
-//其他加入mObjects的也相应进行改动(包括头文件里的模版定义)，每次添加相应的指针以及如：
+//其他加入mObjects的也相应进行改动(包括头文件里的模版定义与实现)，每次添加相应的指针以及如：
 void* BinaryReader::readKnownTypeObject(int type) {
     if (type == 0) {
         mObjects->push_back(nullptr);
@@ -204,6 +209,7 @@ Live2DModelRender::Live2DModelRender(std::shared_ptr<Render> render)
 # 2.在Visual studio中使用Pybind11绑定的live2dv2
 
 改为生成动态库，Pybind11相关语法可见B站,如大佬项目使用C++17
+
 需要设定包含目录有：
 	1.Dependence\Common
 	2.Dependence\pybind11\include
