@@ -2,7 +2,7 @@
 本项目来自Arkueid大佬的[live2d-py](https://github.com/EasyLive2D/live2d-py/commits?author=Arkueid)的v2Cpp。与之不同的是采用Pybind11连接Python与C++而不是Cython Api。并在大佬的基础上修复了现版本可能存在的内存泄漏问题，以及将渲染独立出来方便重写。
 
 Dependence中是默认C++ openGl的依赖，没有添加Pybind11的include，编译前记得加上
-Live2dSource是v2Cpp自定义改造后的源码，Header和Cpp分离，方便导入
+Live2dSource是v2Cpp自定义改造后的源码，Header和Cpp分离，方便导入，Pybind11绑定的代码是Binding.cpp
 PythonCode是Python端测试的代码，自定义使用moderngl渲染
 V2_independent_Render是vs项目，可参考其中依赖
 # 1. 修改
@@ -211,16 +211,29 @@ Live2DModelRender::Live2DModelRender(std::shared_ptr<Render> render)
 改为生成动态库，Pybind11相关语法可见B站,如大佬项目使用C++17
 
 需要设定包含目录有：
+
 	1.Dependence\Common
+	
 	2.Dependence\pybind11\include
+	
 	3.Liv2dSource\include
+	
 	4.你编译目标版本下python的include(与python.exe在同一个文件夹位置)
+	
 需要设定的库目录有
+
 	1.你编译目标版本下python的lib(与python.exe在同一个文件夹位置)
+	
 在连接器中的附加依赖项需要添加
+
 	python3.lib
+	
 	python3XX.lib（如果是python3.11为python311.lib,python3.13为python313.lib）
+	
 需要将以下文件拖入项目
+
 	1.Dependence\Common\glad.c
+	
 	2.Liv2dSource\src下的所有文件
+	
 然后生成就可以了
