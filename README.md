@@ -1,5 +1,5 @@
 # 介绍
-本项目来自Arkueid大佬的[live2d-py](https://github.com/EasyLive2D/live2d-py/commits?author=Arkueid)的v2Cpp。与之不同的是采用Pybind11连接Python与C++而不是Cython Api。并在大佬的基础上修复了可能存在的内存泄漏问题，以及将渲染独立出来方便重写。
+本项目来自Arkueid大佬的[live2d-py](https://github.com/EasyLive2D/live2d-py/commits?author=Arkueid)的v2Cpp。与之不同的是采用Pybind11连接Python与C++而不是Cython Api。并在大佬的基础上修复了现版本可能存在的内存泄漏问题，以及将渲染独立出来方便重写。
 
 Dependence中是默认C++ openGl的依赖，没有添加Pybind11的include，编译前记得加上
 Live2dSource是v2Cpp自定义改造后的源码，Header和Cpp分离，方便导入
