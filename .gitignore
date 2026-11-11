@@ -1,0 +1,11 @@
+# 构建产物
+x64/
+Debug/
+Release/
+*.pyd
+*.obj
+*.lib
+*.exp
+*.pdb
+*.ilk
+.vs/

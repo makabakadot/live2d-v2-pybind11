@@ -1,0 +1,2027 @@
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\CppLive2dReplace\Header\OpenGlRender.hpp --------
+#pragma once
+#include "Render.hpp"
+#include <vector>
+#include <array>
+#include <GL/glew.h>
+#include <cstdint>
+
+namespace live2d
+{	
+	class OpenGlRender:public Render
+	{
+		
+	public:
+		OpenGlRender();
+		~OpenGlRender();
+
+		//DrawParamOpenGL
+		void setupDraw() override;//初始化设定(会调用lazyInit)，如创建Shader，调整渲染设定，获取(创建Fbo)等
+		void endDraw() override;//结束绘制
+		void drawTexture(int texNo,
+			const std::array<float, 4>& screenColor,
+			const std::vector<int16_t>& indices,
+			const std::vector<float>& vertices,
+			const std::vector<float>& uvs,
+			float opacity, int compositionType,
+			const std::array<float, 4>& multiplyColor) override;
+		void clearBuffer(float r, float g, float b, float a) override;
+		void bindFramebuffer(int fb);
+
+		void setTexture(int no, GLuint texData);
+		void setTexture(int no, std::vector<uint8_t> texData) override;
+
+
+		GLuint getTexture(int no);
+		int createFramebuffer();
+		GLuint createVBO(const std::vector<float>& data, int loc, int size);
+		GLuint createEBO(const std::vector<int16_t>& data);
+		void lazyInit();//初始化Shader
+		
+		//void enterMaskRendering() override;
+		//void exitMaskRendering() override;
+
+		//void setupClip(ModelContext* mc) override;
+		void enterMaskRendering() override;
+		void exitMaskRendering() override;
+
+		GLuint mFramebuffer = 0;
+		GLuint mFramebufferTexture = 0;
+		GLuint mShaderNormal = 0, mShaderMask = 0;
+		GLuint mPosVBO = 0, mUVVBO = 0, mEBO = 0;
+		std::vector<GLuint> mTextures;
+		GLuint mCurrentFBO = 0;
+		GLint savedViewport[4];
+	};
+	void ClearBuffer(float r, float g, float b, float a);
+}
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\CppLive2dReplace\Header\Render.hpp --------
+#pragma once
+#include <ClipContext.hpp>
+#include <stb_image.h>
+#include <GL/glew.h>
+#include <memory>
+#ifdef LOGGING
+#include<iostream>
+#endif
+namespace live2d
+{
+	class ModelContext;
+	class DrawParamOpenGL;
+	class IDrawData;
+	class MeshContext;
+	class ClipContext;
+	class ALive2DModel;
+	class Render
+	{
+	public:
+		static constexpr int CHANNEL_COUNT = 4;
+		static constexpr int CLIP_MASK_SIZE = 256;
+		static constexpr int NORMAL_SHADER = 0;
+		static constexpr int MASK_SHADER = 1;
+		static constexpr int COLOR_COMPOSITION_NORMAL = 0;
+		static constexpr int COLOR_COMPOSITION_SCREEN = 1;
+		static constexpr int COLOR_COMPOSITION_MULTIPLY = 2;
+
+		Render();
+		virtual ~Render();
+		//DrawParamOpenGL
+		virtual void setupDraw()=0;//初始化设定(会调用lazyInit)，如创建Shader，调整渲染设定，获取(创建Fbo)等
+		virtual void endDraw()=0;//结束绘制
+		virtual void drawTexture(int texNo,
+			const std::array<float, 4>& screenColor,
+			const std::vector<int16_t>& indices,
+			const std::vector<float>& vertices,
+			const std::vector<float>& uvs,
+			float opacity, int compositionType,
+			const std::array<float, 4>& multiplyColor)=0;
+		virtual void clearBuffer(float r, float g, float b, float a)=0;
+		virtual void setTexture(int no,std::vector<uint8_t> data)=0;
+
+		//Property
+		void setMatrix(const float m[16]);
+		void setClipMatrix(const float m[16]);
+		void setClipBufPre_clipContextForDraw(void* ctx) { mClipDrawCtx = ctx; }
+		void setClipBufPre_clipContextForMask(void* ctx) { mClipMaskCtx = ctx; }
+		void setCulling(bool b);
+
+		//ClippingManagerOpenGL
+		static live2d::ClipContext* findSameClip(
+			const std::vector<ClipContext*>& list,
+			const std::vector<std::string>& ids
+		);
+		void init(ModelContext* mc,
+			const std::vector<IDrawData*>& drawDataList,
+			const std::vector<MeshContext*>& drawContextList);
+		void  calcClippedDrawTotalBounds(ModelContext* mc, ClipContext* clip);
+		void  setupLayoutBounds(int count);
+		static void buildClipMatrix(std::array<float, 16>& out, ClipContext* clip, bool forMask);
+
+		//setupClip在渲染时切换FBO,要么重写enterMaskRendering和 exitMaskRendering实现改变FBO的逻辑，要么重写setupClip,并随便覆盖上面两个函数
+		virtual void setupClip(ModelContext* mc);
+		virtual void enterMaskRendering()=0;
+		virtual void exitMaskRendering() = 0;
+		
+
+
+		std::array<float, 16> mMatrix4x4{};
+		std::array<float, 16> mClipMatrix{};
+		void* mClipMaskCtx = nullptr;   
+		void* mClipDrawCtx = nullptr; 
+		int mClipChannel = 0;
+		std::vector<ClipContext*> mClipContextList;
+		std::vector<std::array<float, 4>> mChannelColors;
+		bool mCulling = true;
+		bool mInited = false;
+		float mBaseRed = 1.0f, mBaseGreen = 1.0f, mBaseBlue = 1.0f, mBaseAlpha = 1.0f;
+	};
+}
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\AffineEnt.hpp --------
+#pragma once
+
+#include "ISerializable.hpp"
+
+namespace live2d {
+
+class AffineEnt final : public ISerializable {
+public:
+    AffineEnt() = default;
+
+    void read(class BinaryReader& br) override;
+
+    float mOriginX = 0.0f;
+    float mOriginY = 0.0f;
+    float mScaleX = 1.0f;
+    float mScaleY = 1.0f;
+    float mRotationDeg = 0.0f;
+    bool mReflectX = false;
+    bool mReflectY = false;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\ALive2DModel.hpp --------
+#pragma once
+#include <memory>
+#include "ModelImpl.hpp"
+#ifdef RenderUse
+#include "OpenGlRender.hpp"
+#endif
+#ifdef RenderReplace
+#include "OpenGlRender.hpp"
+#endif
+namespace live2d {
+
+class ModelContext;
+class DrawParamOpenGL;
+
+class ALive2DModel {
+public:
+    ALive2DModel();
+    virtual ~ALive2DModel() = default;
+
+    void setModelImpl(ModelImpl* impl) { mModelImpl = impl; }
+    ModelImpl* getModelImpl();
+    ModelContext* getModelContext() const { return mModelContext; }
+#ifdef  RenderUse
+    virtual OpenGlRender* getDrawParam() = 0;
+#elif RenderReplace
+    virtual std::shared_ptr<Render> getDrawParam() = 0;
+#else
+    virtual DrawParamOpenGL* getDrawParam() = 0;
+#endif //  RenderUse
+
+    
+    virtual void draw() = 0;
+
+    int getCanvasWidth() const;
+    int getCanvasHeight() const;
+    float getParamFloat(int index) const;
+    void setParamFloat(int index, float value, float weight = 1.0f);
+
+protected:
+    ModelImpl* mModelImpl = nullptr;
+    ModelContext* mModelContext = nullptr;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\AMotion.hpp --------
+#pragma once
+#include <string>
+#include <functional>
+namespace live2d {
+class ALive2DModel;
+class AMotion {
+public:
+    virtual ~AMotion() = default;
+    virtual void updateParam(ALive2DModel* model, float timeSec, float weight) = 0;
+    virtual float getDurationSec() const = 0;
+    virtual bool isLoop() const = 0;
+    virtual bool isFinished() const { return false; }
+    void setFadeIn(float sec) { mFadeInSec = sec; }
+    void setFadeOut(float sec) { mFadeOutSec = sec; }
+    float mFadeInSec = 1.0f, mFadeOutSec = 1.0f;
+    float mWeight = 1.0f;  // Default full weight (fade not yet implemented)
+    std::function<void(std::string, int)> mOnStart;
+    std::function<void(std::string, int)> mOnFinish;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\ArrayTypes.hpp --------
+#pragma once
+
+#include <vector>
+#include <string>
+#include <memory>
+#include <cstdint>
+
+namespace live2d {
+
+template <typename T>
+using Array = std::vector<T>;
+
+using Float32Array = std::vector<float>;
+using Float64Array = std::vector<double>;
+using Int8Array = std::vector<int8_t>;
+using Int16Array = std::vector<int16_t>;
+using Int32Array = std::vector<int32_t>;
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\Avatar.hpp --------
+#pragma once
+
+#include "ISerializable.hpp"
+#include "Id.hpp"
+#include <vector>
+
+namespace live2d {
+
+class Deformer;
+class IDrawData;
+class PartsData;
+
+class Avatar final : public ISerializable {
+public:
+    Avatar() = default;
+
+    void read(class BinaryReader& br) override;
+
+    std::vector<Deformer*>& getDeformer() { return mDeformerList; }
+    std::vector<IDrawData*>& getDrawDataList() { return mDrawDataList; }
+    void replacePartsData(PartsData* parts);
+
+private:
+    const Id* mId = nullptr;
+    std::vector<Deformer*> mDeformerList;
+    std::vector<IDrawData*> mDrawDataList;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\BinaryReader.hpp --------
+#pragma once
+
+#include "DEF.hpp"
+
+#include <vector>
+#include <cstdint>
+#include <string>
+#include <stdexcept>
+#include <cstring>
+#include <type_traits>
+#include <functional>
+#include <memory>
+
+namespace live2d {
+
+class ISerializable;
+
+class BinaryReader {
+public:
+    explicit BinaryReader(std::vector<uint8_t> buf)
+        : mBuf(std::move(buf)), mOffset(0), mFormatVersion(0), mOffset8Bit(0), mCurrent8Bit(0) {}
+
+    // -- Basic types (big-endian binary format) --
+    int readNumber();
+    int readType() { return readNumber(); }
+    double readDouble();
+    float readFloat32();
+    int32_t readInt32();
+    uint8_t readByte();
+    int16_t readUShort();
+    bool readBoolean();
+    std::string readUTF8String();
+
+    // -- Array readers --
+    std::vector<int32_t> readInt32Array();
+    std::vector<float> readFloat32Array();
+    std::vector<double> readFloat64Array();
+
+    // -- Bit-level reading --
+    bool readBit();
+    void checkBits();
+
+    // -- Polymorphic object reader --
+    // Handles: T* (ISerializable subclass), const Id*, std::vector<U*> (object arrays)
+    // Use readInt32Array/readFloat32Array/readFloat64Array for primitive arrays
+    template<typename T>
+    T readObject(int type = -1);
+
+    void* readObjectRaw(int type = -1);
+
+    // -- Accessors --
+    int getFormatVersion() const { return mFormatVersion; }
+    void setFormatVersion(int version) { mFormatVersion = version; }
+    size_t getOffset() const { return mOffset; }
+
+    std::shared_ptr<std::vector<void*>> mObjects;
+    std::shared_ptr<std::vector<std::function<void(void*)>>> mDeleters;
+private:
+    void* readKnownTypeObject(int type);
+    void* readObjectUntyped(int type = -1);
+
+    std::vector<uint8_t> mBuf;
+    size_t mOffset;
+    int mFormatVersion;
+    int mOffset8Bit;
+    int mCurrent8Bit;
+    //std::vector<void*> mObjects;
+
+    // Trait to detect std::vector specializations
+    template<typename T> struct is_vector : std::false_type {};
+    template<typename U, typename A> struct is_vector<std::vector<U, A>> : std::true_type {};
+
+    // Tag-dispatched implementations
+    template<typename T>
+    T readObjectVector(int type);
+
+    template<typename T>
+    T readObjectPtr(int type);
+
+    template<typename T>
+    T readObjectDispatch(std::true_type, int type);
+
+    template<typename T>
+    T readObjectDispatch(std::false_type, int type);
+};
+
+// -- Tag dispatch --
+
+template<typename T>
+inline T BinaryReader::readObject(int type) {
+    return readObjectDispatch<T>(is_vector<T>{}, type);
+}
+
+template<typename T>
+inline T BinaryReader::readObjectDispatch(std::true_type /*is_vector*/, int type) {
+    return readObjectVector<T>(type);
+}
+
+template<typename T>
+inline T BinaryReader::readObjectDispatch(std::false_type /*is_vector*/, int type) {
+    return readObjectPtr<T>(type);
+}
+
+// Helper: reads a primitive-typed array directly (type code already consumed)
+template<typename ElemType>
+inline std::vector<ElemType> readPrimitiveArray(BinaryReader* /*br*/) {
+    throw std::runtime_error("Unsupported primitive array type");
+}
+
+template<>
+inline std::vector<float> readPrimitiveArray<float>(BinaryReader* br) {
+    return br->readFloat32Array();
+}
+template<>
+inline std::vector<int32_t> readPrimitiveArray<int32_t>(BinaryReader* br) {
+    return br->readInt32Array();
+}
+template<>
+inline std::vector<double> readPrimitiveArray<double>(BinaryReader* br) {
+    return br->readFloat64Array();
+}
+
+template<typename T>
+inline T BinaryReader::readObjectVector(int type) {
+    using ElemType = typename T::value_type;
+    checkBits();
+    int actualType = (type < 0) ? readType() : type;
+    
+    // 原
+    //mObjects->push_back(simple);
+    //return T{}e;
+    if (actualType == 0) {
+        mObjects->push_back(nullptr);
+        mDeleters->push_back(nullptr);
+        return T{};
+    }
+
+    if constexpr (std::is_pointer_v<ElemType>) {
+        // Pointer-element arrays (type 15 or OBJECT_REF)
+        if (actualType == OBJECT_REF) {
+            int index = readInt32();
+            if (index < 0 || index >= static_cast<int>(mObjects->size())) {
+                throw std::runtime_error("Invalid object ref index in vector: "
+                                         + std::to_string(index));
+            }
+            auto* storedVec = static_cast<T*>(mObjects->at(index));
+            return *storedVec;
+        }
+
+        if (actualType != 15) {
+            throw std::runtime_error(
+                "Expected array type (15), got " + std::to_string(actualType));
+        }
+
+        int count = readType();
+        T* resultPtr = new T();
+        resultPtr->reserve(count);
+        for (int i = 0; i < count; i++) {
+            resultPtr->push_back(readObject<ElemType>());
+        }
+        mObjects->push_back(resultPtr); // store for OBJECT_REF
+        mDeleters->push_back([](void* ptr) { delete static_cast<T*>(ptr); });
+        return *resultPtr;
+    } else if constexpr (is_vector<ElemType>::value) {
+        // Nested vector (e.g. vector<vector<float>>) — stored as type 15
+        if (actualType == OBJECT_REF) {
+            int index = readInt32();
+            if (index < 0 || index >= static_cast<int>(mObjects->size())) {
+                throw std::runtime_error("OBJECT_REF invalid for nested vec at "
+                                         + std::to_string(index));
+            }
+            return *static_cast<T*>(mObjects->at(index));
+        }
+        if (actualType != 15) {
+            throw std::runtime_error("Expected array type (15) for nested vec, got "
+                                     + std::to_string(actualType));
+        }
+        int count = readType();
+        T* resultPtr = new T();
+        resultPtr->reserve(count);
+        for (int i = 0; i < count; i++) {
+            resultPtr->push_back(readObject<ElemType>());
+        }
+        mObjects->push_back(resultPtr);
+        mDeleters->push_back([](void* ptr) { delete static_cast<T*>(ptr); });
+        return *resultPtr;
+    } else {
+        // Primitive-element arrays — use readKnownTypeObject which stores in mObjects
+        if (actualType == OBJECT_REF) {
+            int index = readInt32();
+            if (index < 0 || index >= static_cast<int>(mObjects->size())) {
+                throw std::runtime_error("Invalid object ref index for primitive: "
+                                         + std::to_string(index));
+            }
+            return *static_cast<T*>(mObjects->at(index));
+        }
+        void* obj = readKnownTypeObject(actualType);
+        //mObjects.push_back(obj);//readKnownTypeObject中加入mObjects
+        return *static_cast<T*>(obj);
+    }
+}
+
+template<typename T>
+inline T BinaryReader::readObjectPtr(int type) {
+    checkBits();
+    int actualType = (type < 0) ? readType() : type;
+
+    if (actualType == 0) {
+        mObjects->push_back(nullptr); // Python stores None for OBJECT_REF alignment
+        mDeleters->push_back(nullptr);
+        return nullptr;
+    }
+
+    if (actualType == OBJECT_REF) {
+        int index = readInt32();
+        if (index < 0 || index >= static_cast<int>(mObjects->size())) {
+            throw std::runtime_error("Invalid object reference index: "
+                                     + std::to_string(index)
+                                     + " size=" + std::to_string(mObjects->size()));
+        }
+        return static_cast<T>(mObjects->at(index));
+    }
+
+    void* obj = readKnownTypeObject(actualType);
+    //mObjects.push_back(obj);//readKnownTypeObject中加入mObjects
+    return static_cast<T>(obj);
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\ClipContext.hpp --------
+#pragma once
+
+#include <vector>
+#include <string>
+#include <array>
+
+namespace live2d {
+
+class ModelContext;
+
+class ClipContext {
+public:
+    ClipContext(ModelContext* mc, const std::vector<std::string>& clipIDs);
+
+    void addClippedDrawData(const std::string& drawId, int drawIdx);
+
+    std::vector<std::string> mClipIDList;
+    std::vector<int> mClippedDrawIndexList;
+    std::vector<int> mClippingMaskDrawIndexList;
+    bool mIsUsing = false;
+    int mLayoutChannelNo = 0;
+    std::array<float, 4> mLayoutBounds = {0, 0, 1, 1};
+    std::array<float, 4> mAllClippedDrawRect = {0, 0, 0, 0};
+    std::array<float, 16> mMatrixForMask{};
+    std::array<float, 16> mMatrixForDraw{};
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\Debug.hpp --------
+#pragma once
+// Debug macros for v2cpp rendering
+// Define V2CPP_DEBUG to enable debug output
+#ifdef V2CPP_DEBUG
+#include <cstdio>
+#define DBG(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
+#else
+#define DBG(fmt, ...) ((void)0)
+#endif
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\DEF.hpp --------
+#pragma once
+
+namespace live2d {
+
+// Vertex format constants
+constexpr int VERTEX_TYPE_OFFSET0_STEP2 = 1;
+constexpr int VERTEX_TYPE_OFFSET2_STEP5 = 2;
+constexpr int VERTEX_OFFSET = 0;
+constexpr int VERTEX_STEP = 2;
+constexpr int VERTEX_TYPE = VERTEX_TYPE_OFFSET0_STEP2;
+constexpr bool REVERSE_TEXTURE_T = true;
+
+// Interpolation and pivot constants
+constexpr int MAX_INTERPOLATION = 5;
+constexpr int PIVOT_TABLE_SIZE = 65;
+constexpr float GOSA = 0.0001f;
+
+// Format version constants
+constexpr int LIVE2D_FORMAT_VERSION_V2_8_TEX_OPTION = 8;
+constexpr int LIVE2D_FORMAT_VERSION_V2_10_SDK2 = 10;
+constexpr int LIVE2D_FORMAT_VERSION_V2_11_SDK2_1 = 11;
+constexpr int LIVE2D_FORMAT_VERSION_AVAILABLE = LIVE2D_FORMAT_VERSION_V2_11_SDK2_1;
+
+// Binary format constants
+constexpr int OBJECT_REF = 33;
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\Deformer.hpp --------
+#pragma once
+
+#include "ISerializable.hpp"
+#include "Id.hpp"
+#include <vector>
+
+namespace live2d {
+
+class DeformerContext;
+class ModelContext;
+class PivotManager;
+
+class Deformer : public ISerializable {
+public:
+    static constexpr int DEFORMER_INDEX_NOT_INIT = -2;
+    static constexpr int TYPE_ROTATION = 1;
+    static constexpr int TYPE_WARP = 2;
+
+    Deformer() = default;
+
+    void read(class BinaryReader& br) override;
+    void readOpacity(class BinaryReader& br);
+
+    virtual DeformerContext* init(ModelContext* mc) = 0;
+    virtual void setupInterpolate(ModelContext* modelContext, DeformerContext* deformerContext) = 0;
+    virtual void interpolateOpacity(ModelContext* mdc, PivotManager* pivotMgr, DeformerContext* bctx, bool& ret);
+    virtual bool setupTransform(ModelContext* mc, DeformerContext* dc) = 0;
+    virtual void transformPoints(ModelContext* mc, DeformerContext* dc,
+                                 const std::vector<float>& srcPoints, std::vector<float>& dstPoints,
+                                 int numPoint, int ptOffset, int ptStep) = 0;
+    virtual int getType() const = 0;
+
+    void setTargetId(const Id* targetId) { mTargetId = targetId; }
+    void setId(const Id* idVal) { mId = idVal; }
+    const Id* getTargetId() const { return mTargetId; }
+    const Id* getId() const { return mId; }
+    bool needTransform() const;
+
+protected:
+    const Id* mId = nullptr;
+    const Id* mTargetId = nullptr;
+    bool mDirty = true;
+    std::vector<float> mPivotOpacities;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\DeformerContext.hpp --------
+#pragma once
+
+namespace live2d {
+
+class Deformer;
+
+class DeformerContext {
+public:
+    explicit DeformerContext(Deformer* deformer)
+        : mDeformer(deformer) {}
+    virtual ~DeformerContext() = default;
+
+    Deformer* getDeformer() const { return mDeformer; }
+
+    bool isAvailable() const { return mAvailable; }
+    void setAvailable(bool v) { mAvailable = v; }
+
+    bool isOutsideParam() const { return mOutsideParam; }
+    void setOutsideParam(bool v) { mOutsideParam = v; }
+
+    float getTotalScale() const { return mTotalScale; }
+    void setTotalScale_notForClient(float v) { mTotalScale = v; }
+
+    float getTotalOpacity() const { return mTotalOpacity; }
+    void setTotalOpacity(float v) { mTotalOpacity = v; }
+
+    float getInterpolatedOpacity() const { return mInterpolatedOpacity; }
+    void setInterpolatedOpacity(float v) { mInterpolatedOpacity = v; }
+
+    int mTmpDeformerIndex = -2;
+    int mPartsIndex = 0;
+
+protected:
+    Deformer* mDeformer;
+    bool mAvailable = true;
+    bool mOutsideParam = false;
+    float mTotalScale = 1.0f;
+    float mTotalOpacity = 1.0f;
+    float mInterpolatedOpacity = 1.0f;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\Id.hpp --------
+#pragma once
+
+#include <string>
+#include <unordered_map>
+#include <memory>
+
+namespace live2d {
+
+class Id {
+public:
+    explicit Id(const std::string& idStr) : mId(idStr) {}
+
+    const std::string& str() const { return mId; }
+
+    bool operator==(const Id& other) const { return mId == other.mId; }
+    bool operator!=(const Id& other) const { return mId != other.mId; }
+    bool operator==(const std::string& s) const { return mId == s; }
+    bool operator!=(const std::string& s) const { return mId != s; }
+
+    static const Id& DST_BASE_ID();
+    static const Id& getID(const std::string& idStr);
+    static void releaseStored();
+
+private:
+    std::string mId;
+    static std::unordered_map<std::string, std::unique_ptr<Id>> sInstances;
+};
+
+} // namespace live2d
+
+namespace std {
+template <>
+struct hash<live2d::Id> {
+    size_t operator()(const live2d::Id& id) const noexcept {
+        return hash<string>()(id.str());
+    }
+};
+} // namespace std
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\IDrawContext.hpp --------
+#pragma once
+
+namespace live2d {
+
+class IDrawContext {
+public:
+    virtual ~IDrawContext() = default;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\IDrawData.hpp --------
+#pragma once
+
+#include "ISerializable.hpp"
+#include "Id.hpp"
+#include <vector>
+#include <string>
+#ifdef  RenderUse
+#include "OpenGlRender.hpp"
+#elif RenderReplace
+#include "OpenGlRender.hpp"
+#endif //  RenderUse
+
+namespace live2d {
+
+class PivotManager;
+class MeshContext;
+class ModelContext;
+class IDrawContext;
+
+class IDrawData : public ISerializable {
+public:
+    static constexpr int DEFORMER_INDEX_NOT_INIT = -2;
+    static constexpr int DEFAULT_ORDER = 500;
+    static constexpr int TYPE_MESH = 2;
+
+    IDrawData() = default;
+
+    void read(class BinaryReader& br) override;
+
+    void setupInterpolate(ModelContext* mc, MeshContext* ctx);
+    virtual void setupTransform(ModelContext* mc, IDrawContext* dc = nullptr) = 0;
+
+    const Id* getId() const { return mId; }
+    void setId(const Id* value) { mId = value; }
+    const Id* getTargetId() const { return mTargetId; }
+    void setTargetId(const Id* value) { mTargetId = value; }
+    bool needTransform() const {
+        return mTargetId != nullptr && *mTargetId != Id::DST_BASE_ID();
+    }
+
+    static float getOpacity(MeshContext* ctx);
+    static int getDrawOrder(MeshContext* ctx);
+    virtual int getType() const = 0;
+
+    std::vector<std::string>* getClipIDList() const { return mClipIDList; }
+
+    static int getTotalMinOrder() { return sTotalMinOrder; }
+    static int getTotalMaxOrder() { return sTotalMaxOrder; }
+
+    static int sTotalMinOrder;
+    static int sTotalMaxOrder;
+
+protected:
+
+    const Id* mId = nullptr;
+    const Id* mTargetId = nullptr;
+    PivotManager* mPivotMgr = nullptr;
+    int mAverageDrawOrder = 0;
+    std::vector<int> mPivotDrawOrders;
+    std::vector<float> mPivotOpacities;
+    std::vector<std::string>* mClipIDList = nullptr;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\ISerializable.hpp --------
+#pragma once
+
+namespace live2d {
+
+class BinaryReader;
+
+class ISerializable {
+public:
+    virtual ~ISerializable() = default;
+    virtual void read(BinaryReader& br) = 0;
+    int type;
+
+    static void ISerializableRelease(void* ptr);
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DBaseModel.hpp --------
+#pragma once
+#include <string>
+#include <unordered_map>
+#include <memory>
+#include <functional>
+#include "ALive2DModel.hpp"
+#include "L2DModelMatrix.hpp"
+namespace live2d {
+class Live2DModelRender;
+class L2DMotionManager;
+class L2DEyeBlink;
+class L2DPose;
+class L2DPhysics;
+class AMotion;
+class Render;
+class L2DBaseModel {
+public:
+    L2DBaseModel();
+    L2DBaseModel(std::shared_ptr<Render>  render);
+    virtual ~L2DBaseModel();
+    void loadModelData(const std::vector<uint8_t>& data, int version);
+    AMotion* loadMotion(const std::string& name, const std::vector<uint8_t>& data);
+    AMotion* loadExpression(const std::string& name, const std::vector<uint8_t>& data);
+    L2DPose* loadPose(const std::vector<uint8_t>& data);
+    void loadPhysics(const std::vector<uint8_t>& data);
+    bool hitTestSimple(const std::string& drawID, float x, float y);
+    Live2DModelRender* getLive2DModel() const { return mLive2DModel; }
+    L2DModelMatrix& getModelMatrix() { return mModelMatrix; }
+    L2DMotionManager* getMainMotionManager() const { return mMainMotionMgr; }
+    L2DMotionManager* getExpressionManager() const { return mExpressionMgr; }
+    void setAlpha(float a) { mAlpha = (a < 0 ? 0 : (a > 1 ? 1 : a)); }
+    float getAlpha() const { return mAlpha; }
+    void setAccel(float x, float y, float z) { mAccelX = x; mAccelY = y; mAccelZ = z; }
+    void setDrag(float x, float y) { mDragX = x; mDragY = y; }
+    bool isInitialized() const { return mInitialized; }
+    void setInitialized(bool v) { mInitialized = v; }
+    bool isUpdating() const { return mUpdating; }
+    void setUpdating(bool v) { mUpdating = v; }
+    Live2DModelRender* mLive2DModel = nullptr;
+    L2DModelMatrix mModelMatrix;
+    L2DEyeBlink* mEyeBlink = nullptr;
+    L2DPhysics* mPhysics = nullptr;
+    L2DPose* mPose = nullptr;
+    L2DMotionManager* mMainMotionMgr = nullptr;
+    L2DMotionManager* mExpressionMgr = nullptr;
+    std::unordered_map<std::string, std::vector<AMotion*>> mMotions;
+    std::unordered_map<std::string, AMotion*> mExpressions;
+    float mAlpha = 1.0f, mAccelX = 0, mAccelY = 0, mAccelZ = 0, mDragX = 0, mDragY = 0;
+    bool mInitialized = false, mUpdating = false;
+
+    std::shared_ptr<std::vector<void*>> mObjects;
+    std::shared_ptr< std::vector<std::function<void(void*)>>> mDeleters;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DExpressionMotion.hpp --------
+#pragma once
+#include <cstdint>
+#include <vector>
+#include "AMotion.hpp"
+#include "L2DExpressionParam.hpp"
+namespace live2d {
+class L2DExpressionMotion : public AMotion {
+public:
+    L2DExpressionMotion();
+    void updateParam(ALive2DModel* model, float timeSec, float weight) override;
+    float getDurationSec() const override { return 1.0f; }
+    bool isLoop() const override { return false; }
+    bool isFinished() const override { return mFinished; }
+    static L2DExpressionMotion* load(const std::vector<uint8_t>& data);
+    std::vector<L2DExpressionParam> mParams;
+private:
+    bool mFinished = false;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DExpressionParam.hpp --------
+#pragma once
+#include <string>
+namespace live2d {
+struct L2DExpressionParam {
+    std::string mId; float mValue = 0; float mDefValue = 0; int mBlendType = 1;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DEyeBlink.hpp --------
+#pragma once
+#include <string>
+namespace live2d {
+class ALive2DModel;
+class L2DEyeBlink {
+public:
+    L2DEyeBlink();
+    void setInterval(int ms) { mBlinkIntervalMs = ms; }
+    void setEyeMotion(int closeMs, int closedMs, int openMs);
+    void updateParam(ALive2DModel* model);
+    float mBlinkIntervalMs = 5000;
+private:
+    enum State { FIRST, INTERVAL, CLOSING, CLOSED, OPENING };
+    State mState = FIRST;
+    float mClosingMs = 150, mClosedMs = 80, mOpeningMs = 220;
+    float mCurrentTime = 0, mNextBlinkTime = 0, mStateStartTime = 0;
+    bool mCloseIfZero = true;
+    std::string mEyeLId = "PARAM_EYE_L_OPEN", mEyeRId = "PARAM_EYE_R_OPEN";
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DMatrix44.hpp --------
+#pragma once
+
+#include <array>
+
+namespace live2d {
+
+class L2DMatrix44 {
+public:
+    L2DMatrix44();
+
+    void identity();
+    void setMatrix(const float m[16]);
+    void multTranslate(float x, float y, float z);
+    void multScale(float sx, float sy, float sz);
+    std::array<float, 16>& getArray() { return mMatrix; }
+
+    static L2DMatrix44 mul(const L2DMatrix44& a, const L2DMatrix44& b);
+
+private:
+    std::array<float, 16> mMatrix;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DModelMatrix.hpp --------
+#pragma once
+#include <array>
+
+namespace live2d {
+
+class L2DModelMatrix {
+public:
+    L2DModelMatrix() { identity(); }
+    L2DModelMatrix(float w, float h);
+
+    void identity();
+    void setWidth(float w);
+    void setHeight(float h);
+    void setCenterPosition(float x, float y);
+    void translate(float x, float y);
+    void scale(float sx, float sy);
+    std::array<float, 16> getArray() const { return mMat; }
+    float getScaleX() const { return mMat[0]; }
+    float getScaleY() const { return mMat[5]; }
+    float invertTransformX(float src) const { return (src - mMat[12]) / mMat[0]; }
+    float invertTransformY(float src) const { return (src - mMat[13]) / mMat[5]; }
+
+    float getScale() const { return mScale; }
+    void setScale(float s) { mScale = s; }
+    float getX() const { return mX; }
+    void setX(float x) { mX = x; }
+    float getY() const { return mY; }
+    void setY(float y) { mY = y; }
+
+    float mWidth = 0, mHeight = 0;
+    float mX = 0, mY = 0;
+    float mScale = 1.0f;
+
+private:
+    std::array<float, 16> mMat{};
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DMotionManager.hpp --------
+#pragma once
+#include "AMotion.hpp"
+#include <vector>
+namespace live2d {
+class ALive2DModel;
+struct MotionQueueEntry {
+    AMotion* mMotion = nullptr; float mFadeIn = 0, mFadeOut = 0;
+    bool mStarted = false; float mStartTimeMs = 0;
+    float mFadeInStartMs = 0;  // for easing calculation
+    float mEndTimeMs = -1;     // for fade-out
+    bool mFinished = false;    // true when endTimeMs has passed
+};
+class L2DMotionManager {
+public:
+    L2DMotionManager();
+    int startMotion(AMotion* motion, bool autoPriority);
+    bool updateParam(ALive2DModel* model);
+    bool isFinished() const;
+    void stopAllMotions();
+    int mCurrentPriority = 0, mReservePriority = 0;
+    std::vector<MotionQueueEntry> mMotions;
+    bool reserveMotion(int priority);
+    int startMotionPrio(AMotion* motion, int priority);
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DPartsParam.hpp --------
+#pragma once
+#include <string>
+#include <vector>
+namespace live2d {
+struct L2DPartsParam {
+    std::string mId; int mLinkCount = 0; std::vector<std::string> mLinkIds;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DPhysics.hpp --------
+#pragma once
+#include <cstdint>
+#include <vector>
+namespace live2d {
+class PhysicsHair;
+class ALive2DModel;
+class L2DPhysics {
+public:
+    L2DPhysics();
+    ~L2DPhysics();
+    void updateParam(ALive2DModel* model);
+    static L2DPhysics* load(const std::vector<uint8_t>& data);
+    std::vector<PhysicsHair*> mPhysicsList;
+private:
+    long long mStartTimeMs = 0;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DPose.hpp --------
+#pragma once
+#include <cstdint>
+#include <vector>
+#include <string>
+namespace live2d {
+class ALive2DModel;
+struct PartData {
+    int partsIndex = -1; int paramIndex = -1;
+    std::string id;
+    std::vector<PartData> link;
+    void initIndex(ALive2DModel* model);
+};
+struct PosePartGroup { std::vector<PartData> parts; };
+class L2DPose {
+public:
+    L2DPose();
+    void updateParam(ALive2DModel* model);
+    static L2DPose* load(const std::vector<uint8_t>& data);
+public:
+    std::vector<PosePartGroup> mMGroups;
+private:
+    float mLastTime = 0; ALive2DModel* mLastModel = nullptr;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\L2DTargetPoint.hpp --------
+#pragma once
+
+namespace live2d {
+
+class L2DTargetPoint {
+public:
+    L2DTargetPoint() = default;
+
+    void set(float x, float y) { mTargetX = x; mTargetY = y; }
+    float getX() const { return mX; }
+    float getY() const { return mY; }
+    void update(float deltaSec);
+
+private:
+    float mX = 0, mY = 0;
+    float mTargetX = 0, mTargetY = 0;
+    static constexpr float sEpsilon = 0.01f;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\LAppModel.hpp --------
+#pragma once
+#include "L2DBaseModel.hpp"
+#include "L2DTargetPoint.hpp"
+#include "MatrixManager.hpp"
+#include "Live2DModelRender.hpp"
+#include <functional>
+#include <string>
+#include <Render.hpp>
+namespace live2d {
+class LAppModel : public L2DBaseModel {
+public:
+    using StartCallback = std::function<void(const std::string&, int)>;
+    using FinishCallback = std::function<void(const std::string&, int)>;
+
+    LAppModel();
+    LAppModel(std::shared_ptr<Render> render);
+    ~LAppModel() override;
+    bool loadModelJson(const std::string& path);
+    void resize(int w, int h);
+    void drag(float x, float y);
+    void touch(float x, float y);
+    bool isMotionFinished() const;
+    void setOffset(float dx, float dy);
+    void setScale(float s);
+    void setParameterValue(const std::string& id, float val, float weight = 1.0f);
+    void addParameterValue(const std::string& id, float val, float weight = 1.0f);
+    void setAutoBreathEnable(bool v) { mAutoBreath = v; }
+    void setAutoBlinkEnable(bool v) { mAutoBlink = v; }
+    int getParameterCount() const;
+    int getPartCount() const;
+    std::string getPartId(int index) const;
+    void setPartOpacity(int index, float val);
+    void update();
+    void draw();
+    bool hitTest(const std::string& area, float x, float y);
+    void setExpression(const std::string& name);
+    void setRandomExpression();
+    void startMotion(const std::string& group, int no, int priority,
+                     StartCallback onStart = nullptr, FinishCallback onFinish = nullptr);
+    void startRandomMotion(const std::string& group, int priority,
+                           StartCallback onStart = nullptr, FinishCallback onFinish = nullptr);
+    void clearMotions();
+    void stopAllMotions() { clearMotions(); }
+    void resetExpression();
+    void resetPose();
+    float getCanvasWidth() const { return (float)mLive2DModel->getCanvasWidth(); }
+    float getCanvasHeight() const { return (float)mLive2DModel->getCanvasHeight(); }
+    int getPixelsPerUnit() const { return 1; }
+    void rotate(float deg);
+    float getParameterValue(int index) const;
+    float getParameterMin(int index) const;
+    float getParameterMax(int index) const;
+    float getParameterDefault(int index) const;
+    std::string getParameterId(int index) const;
+    void setPartScreenColor(int index, float r, float g, float b, float a);
+    void setPartMultiplyColor(int index, float r, float g, float b, float a);
+    std::vector<float> getPartScreenColor(int index) const;
+    std::vector<float> getPartMultiplyColor(int index) const;
+    std::vector<std::string> hitPart(float x, float y, bool topOnly);
+    void setTexture(int no, int texId);
+    L2DTargetPoint mDragMgr;
+    MatrixManager mMatrixManager;
+    bool mAutoBreath = true, mAutoBlink = true;
+    bool mClearFlag = false;
+    std::string mModelHomeDir;
+private:
+    StartCallback mOnStartMotion;
+    FinishCallback mOnFinishMotion;
+    bool mCallbacksPending = false;
+    std::string mCurrentGroup; int mCurrentNo = 0;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\Live2DModelRender.hpp --------
+#pragma once
+#include <cstdint>
+#include "ALive2DModel.hpp"
+
+
+namespace live2d {
+class DrawParamOpenGL;
+class Live2DModelRender : public ALive2DModel {
+public:
+    Live2DModelRender();
+    Live2DModelRender(std::shared_ptr<Render> render);
+    ~Live2DModelRender() override;
+#ifdef RenderUse
+    OpenGlRender* getDrawParam() override { return mDrawParam; }
+#elif RenderReplace
+    std::shared_ptr<Render> getDrawParam() override { return mDrawParam; }
+#else
+    DrawParamOpenGL* getDrawParam() override { return mDrawParam; }
+#endif
+    void draw() override;
+    void resize(int w, int h);
+    static Live2DModelRender* loadModel(const std::vector<uint8_t>& data);
+#ifdef RenderUse
+    OpenGlRender* mDrawParam = nullptr;
+#elif RenderReplace
+    std::shared_ptr<Render> mDrawParam = nullptr;
+#else
+    DrawParamOpenGL* mDrawParam = nullptr;
+#endif // Render
+    
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\Live2DMotion.hpp --------
+#pragma once
+#include <cstdint>
+#include "AMotion.hpp"
+#include "Motion.hpp"
+#include <vector>
+#include <string>
+namespace live2d {
+class BinaryReader;
+class Live2DMotion : public AMotion {
+public:
+    Live2DMotion();
+    void updateParam(ALive2DModel* model, float timeSec, float weight) override;
+    float getDurationSec() const override;
+    bool isLoop() const override;
+    bool isFinished() const override { return mFinished; }
+    static Live2DMotion* load(const std::vector<uint8_t>& data);
+    std::vector<Motion> mMotions;
+    int mFps = 30;
+    float mDurationMs = 0;
+    float mLoopDurationMs = 0;
+    bool mLoop = false;
+    bool mLoopFadeIn = true;
+    bool mFinished = false;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\Live2DObjectFactory.hpp --------
+#pragma once
+
+#include <memory>
+
+namespace live2d {
+
+class ISerializable;
+
+class Live2DObjectFactory {
+public:
+    static std::unique_ptr<ISerializable> create(int clsNo);
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\MatrixManager.hpp --------
+#pragma once
+#include <array>
+
+namespace live2d {
+class L2DModelMatrix;
+
+class MatrixManager {
+public:
+    MatrixManager();
+
+    void onResize(int width, int height);
+    void setScale(float s);
+    void setOffset(float dx, float dy);
+    void rotate(float deg);
+    std::array<float, 16> getMvp(L2DModelMatrix* modelMatrix) const;
+
+    int getWidth() const { return mWidth; }
+    int getHeight() const { return mHeight; }
+
+private:
+    int mWidth = 600, mHeight = 600;
+    float mScale = 1.0f, mOffsetX = 0, mOffsetY = 0, mRotation = 0;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\Mesh.hpp --------
+#pragma once
+
+#include "IDrawData.hpp"
+#include <vector>
+
+namespace live2d {
+
+class PivotManager;
+class MeshContext;
+class DrawParamOpenGL;
+
+class Mesh final : public IDrawData {
+public:
+    static constexpr int MASK_COLOR_COMPOSITION = 30;
+    static constexpr int COLOR_COMPOSITION_NORMAL = 0;
+    static constexpr int COLOR_COMPOSITION_SCREEN = 1;
+    static constexpr int COLOR_COMPOSITION_MULTIPLY = 2;
+
+    Mesh();
+
+    int getType() const override { return TYPE_MESH; }
+    void read(class BinaryReader& br) override;
+    void setupTransform(ModelContext* mc, IDrawContext* dc = nullptr) override;
+
+    MeshContext* init(ModelContext* modelContext);
+    void setupInterpolate(ModelContext* modelContext, MeshContext* meshContext);
+#ifdef RenderUse
+    void draw(OpenGlRender* dp, ModelContext* mctx, MeshContext* dctx);
+#elif RenderReplace
+    void draw(Render*  dp, ModelContext* mctx, MeshContext* dctx);
+#else
+    void draw(DrawParamOpenGL* dp, ModelContext* mctx, MeshContext* dctx);
+#endif // RenderUse
+
+    
+
+    void setTextureNo(int texNo) { mTextureNo = texNo; }
+    int getTextureNo() const { return mTextureNo; }
+    int getColorCompositionType() const { return mColorCompositionType; }
+    const std::vector<float>& getUvs() const { return mUvs; }
+    int getNumPoints() const { return mPointCount; }
+    const std::vector<int16_t>& getIndexArray() const { return mIndexArray; }
+
+private:
+    int mTextureNo = -1;
+    int mPointCount = 0;
+    int mPolygonCount = 0;
+    int mOptionFlag = 0;
+    std::vector<int16_t> mIndexArray;
+    std::vector<std::vector<float>> mPivotPoints;
+    std::vector<float> mUvs;
+    int mColorCompositionType = COLOR_COMPOSITION_NORMAL;
+    bool mCulling = true;
+    int mInstanceNo = 0;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\MeshContext.hpp --------
+#pragma once
+
+#include "IDrawContext.hpp"
+#include <vector>
+
+namespace live2d {
+
+class Mesh;
+
+class MeshContext : public IDrawContext {
+public:
+    explicit MeshContext(Mesh* drawData) : mDrawData(drawData) {}
+
+    Mesh* getDrawData() const { return mDrawData; }
+
+    Mesh* mDrawData;
+    std::vector<float> mInterpolatedPoints;
+    std::vector<float> mTransformedPoints;
+    float mPartsOpacity = 1.0f;
+    float mBaseOpacity = 1.0f;
+    float mInterpolatedOpacity = 1.0f;
+    int mInterpolatedDrawOrder = 0;
+    int mPartsIndex = 0;
+    int mTmpDeformerIndex = -2;
+    bool mAvailable = true;
+    bool mParamOutside = false;
+    void* mClipBufPre_clipContext = nullptr;
+    int mClipChannelNo = -1;
+    float mClipMatrixForDraw[16] = {};
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\ModelContext.hpp --------
+#pragma once
+
+#include <vector>
+#include "Id.hpp"
+
+#ifdef RenderUse
+#include "OpenGlRender.hpp"
+#elif RenderReplace
+#include "OpenGlRender.hpp"
+#endif
+namespace live2d {
+
+class ALive2DModel;
+class ModelImpl;
+class Deformer;
+class DeformerContext;
+class IDrawData;
+class IDrawContext;
+class MeshContext;
+class PartsData;
+class PartsDataContext;
+class PivotManager;
+class ParamPivots;
+class DrawParamOpenGL;
+class ClippingManagerOpenGL;
+
+class ModelContext {
+public:
+    static constexpr int NOT_USED_ORDER = -1;
+    static constexpr int NO_NEXT = -1;
+    static constexpr bool PARAM_UPDATED = true;
+    static constexpr float PARAM_FLOAT_MIN = -1000000.0f;
+    static constexpr float PARAM_FLOAT_MAX = 1000000.0f;
+
+    explicit ModelContext(ALive2DModel* model);
+    ~ModelContext();
+
+    void init();
+    void update();
+#ifdef RenderUse
+    void preDraw(OpenGlRender* dp);
+    void draw(OpenGlRender* dp);
+#elif RenderReplace
+    void preDraw(std::shared_ptr<Render> dp);
+    void draw(std::shared_ptr<Render> dp);
+#else
+    void preDraw(DrawParamOpenGL* dp);
+    void draw(DrawParamOpenGL* dp);
+#endif
+    int getParamIndex(const Id* paramId);
+    int getDeformerIndex(const Id* id);
+    int extendAndAddParam(const Id* paramId, float defaultVal, float maxVal, float minVal);
+
+    void setParamFloat(int index, float value);
+    float getParamFloat(int index) const;
+    float getParamMax(int index) const;
+    float getParamMin(int index) const;
+    float getParamDefault(int index) const;
+    bool isParamUpdated(int index) const;
+
+    void loadParam();
+    void saveParam();
+
+    int getInitVersion() const { return mInitVersion; }
+    bool requireSetup() const { return mNeedSetup; }
+
+    Deformer* getDeformer(int index) const { return mDeformerList[index]; }
+    DeformerContext* getDeformerContext(int index) const { return mDeformerContextList[index]; }
+    IDrawData* getDrawData(int index) const;
+    MeshContext* getDrawContext(int index) const { return mDrawContextList[index]; }
+    PartsDataContext* getPartsContext(int index) const { return mPartsContextList[index]; }
+    int getDrawDataIndex(const Id* drawDataId) const;
+    int getPartsDataIndex(const Id* id) const;
+
+    void setPartsOpacity(int index, float opacity);
+    float getPartsOpacity(int index) const;
+
+    void setPartMultiplyColor(int index, float r, float g, float b, float a);
+    void setPartScreenColor(int index, float r, float g, float b, float a);
+#ifdef RenderUse
+    void setDrawParam(OpenGlRender* dp) { mDpGL = dp; }
+    OpenGlRender* getDrawParam() const { return mDpGL; }
+#elif RenderReplace
+    void setDrawParam(std::shared_ptr<Render> dp) { mDpGL = dp; }
+    std::shared_ptr<Render> getDrawParam() const { return mDpGL; }
+#else
+    void setDrawParam(DrawParamOpenGL* dp) { mDpGL = dp; }
+    DrawParamOpenGL* getDrawParam() const { return mDpGL; }
+#endif
+    // Temp arrays used by pivot interpolation
+    std::vector<int16_t>& getTempPivotTableIndices() { return mTmpPivotTableIndices; }
+    std::vector<float>& getTempT() { return mTempTArray; }
+
+    // Data lists (populated from ModelImpl)
+    std::vector<const Id*> mParamIdList;
+    std::vector<float> mParamValues;
+    std::vector<float> mLastParamValues;
+    std::vector<float> mParamMinValues;
+    std::vector<float> mParamMaxValues;
+    std::vector<float> mParamDefaultValues;
+    std::vector<float> mSavedParamValues;
+    std::vector<bool> mUpdatedParamFlags;
+    std::vector<Deformer*> mDeformerList;
+    std::vector<IDrawData*> mDrawDataList;
+    std::vector<PartsData*> mPartsDataList;
+    std::vector<DeformerContext*> mDeformerContextList;
+    std::vector<MeshContext*> mDrawContextList;
+    std::vector<PartsDataContext*> mPartsContextList;
+
+private:
+    void release();
+
+public:
+    ALive2DModel* mModel = nullptr;
+    bool mNeedSetup = true;
+    int mInitVersion = -1;
+    int mNextParamPos = 0;
+
+#ifdef RenderUse
+    OpenGlRender* mDpGL = nullptr;
+    ClippingManagerOpenGL* mClipManager = nullptr;
+#elif RenderReplace
+    std::shared_ptr<Render> mDpGL = nullptr;
+#else
+    DrawParamOpenGL* mDpGL = nullptr;
+    ClippingManagerOpenGL* mClipManager = nullptr;
+#endif
+    
+
+    std::vector<int16_t> mOrderListFirstDrawIndex;
+    std::vector<int16_t> mOrderListLastDrawIndex;
+    std::vector<int16_t> mNextListDrawIndex;
+    std::vector<int16_t> mTmpPivotTableIndices;
+    std::vector<float> mTempTArray;
+
+    // Cache for ID lookup
+    mutable void* mTmpDrawDataList = nullptr; // TODO: use proper map
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\ModelImpl.hpp --------
+#pragma once
+
+#include "ISerializable.hpp"
+#include <vector>
+
+namespace live2d {
+
+class ParamDefSet;
+class PartsData;
+
+class ModelImpl final : public ISerializable {
+public:
+    ModelImpl() = default;
+
+    void read(class BinaryReader& br) override;
+
+    int getCanvasWidth() const { return mCanvasWidth; }
+    int getCanvasHeight() const { return mCanvasHeight; }
+
+    ParamDefSet* getParamDefSet() const { return mParamDefSet; }
+    std::vector<PartsData*>& getPartsDataList() { return mPartsDataList; }
+
+private:
+    ParamDefSet* mParamDefSet = nullptr;
+    std::vector<PartsData*> mPartsDataList;
+    int mCanvasWidth = 400;
+    int mCanvasHeight = 400;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\Motion.hpp --------
+#pragma once
+#include <string>
+#include <vector>
+namespace live2d {
+struct Motion {
+    std::string mParamId;
+    std::string mSecondaryId;
+    std::vector<float> mValues;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\ParamDefFloat.hpp --------
+#pragma once
+
+#include "ISerializable.hpp"
+#include "Id.hpp"
+
+namespace live2d {
+
+class ParamDefFloat final : public ISerializable {
+public:
+    ParamDefFloat() = default;
+
+    void read(class BinaryReader& br) override;
+
+    float getMinValue() const { return mMinValue; }
+    float getMaxValue() const { return mMaxValue; }
+    float getDefaultValue() const { return mDefaultValue; }
+    const Id* getParamID() const { return mParamId; }
+
+private:
+    float mMinValue = 0.0f;
+    float mMaxValue = 0.0f;
+    float mDefaultValue = 0.0f;
+    const Id* mParamId = nullptr;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\ParamDefSet.hpp --------
+#pragma once
+
+#include "ISerializable.hpp"
+#include <vector>
+
+namespace live2d {
+
+class ParamDefFloat;
+
+class ParamDefSet final : public ISerializable {
+public:
+    ParamDefSet() = default;
+
+    void read(class BinaryReader& br) override;
+
+    const std::vector<ParamDefFloat*>& getParamDefFloatList() const { return mParamDefList; }
+
+private:
+    std::vector<ParamDefFloat*> mParamDefList;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\ParamPivots.hpp --------
+#pragma once
+
+#include "ISerializable.hpp"
+#include "Id.hpp"
+#include <vector>
+
+namespace live2d {
+
+class ParamPivots final : public ISerializable {
+public:
+    static constexpr int PARAM_INDEX_NOT_INIT = -2;
+
+    ParamPivots() = default;
+
+    void read(class BinaryReader& br) override;
+
+    int getParamIndex(int initVersion);
+    void setParamIndex(int index, int initVersion) {
+        mParamIndex = index;
+        mInitVersion = initVersion;
+    }
+
+    const Id* getParamID() const { return mParamId; }
+    int getPivotCount() const { return mPivotCount; }
+    const std::vector<float>& getPivotValues() const { return mPivotValues; }
+
+    int getTmpPivotIndex() const { return mTmpPivotIndex; }
+    void setTmpPivotIndex(int index) { mTmpPivotIndex = index; }
+    float getTmpT() const { return mTmpT; }
+    void setTmpT(float value) { mTmpT = value; }
+
+private:
+    int mPivotCount = 0;
+    const Id* mParamId = nullptr;
+    std::vector<float> mPivotValues;
+    int mParamIndex = PARAM_INDEX_NOT_INIT;
+    int mInitVersion = -1;
+    int mTmpPivotIndex = 0;
+    float mTmpT = 0.0f;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\PartsData.hpp --------
+#pragma once
+
+#include "ISerializable.hpp"
+#include "Id.hpp"
+#include <vector>
+
+namespace live2d {
+
+class PartsDataContext;
+class Deformer;
+class IDrawData;
+
+class PartsData final : public ISerializable {
+public:
+    PartsData() = default;
+
+    void read(class BinaryReader& br) override;
+
+    PartsDataContext* init();
+
+    bool isVisible() const { return mVisible; }
+    bool isLocked() const { return mLocked; }
+    void setVisible(bool v) { mVisible = v; }
+    void setLocked(bool v) { mLocked = v; }
+
+    void setDeformer(std::vector<Deformer*>& list) { mDeformerList = list; }
+    void setDrawData(std::vector<IDrawData*>& list) { mDrawDataList = list; }
+
+    std::vector<Deformer*>& getDeformer() { return mDeformerList; }
+    std::vector<IDrawData*>& getDrawData() { return mDrawDataList; }
+    const Id* getId() const { return mId; }
+    void setId(const Id* idVal) { mId = idVal; }
+
+private:
+    bool mVisible = true;
+    bool mLocked = false;
+    const Id* mId = nullptr;
+    std::vector<Deformer*> mDeformerList;
+    std::vector<IDrawData*> mDrawDataList;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\PartsDataContext.hpp --------
+#pragma once
+
+#include <array>
+
+namespace live2d {
+
+class PartsData;
+
+class PartsDataContext {
+public:
+    explicit PartsDataContext(PartsData* parts) : mPartsData(parts) {}
+
+    float getPartsOpacity() const { return mPartsOpacity; }
+    void setPartsOpacity(float value) { mPartsOpacity = value; }
+
+    void setPartScreenColor(float r, float g, float b, float a);
+    void setPartMultiplyColor(float r, float g, float b, float a);
+
+    PartsData* mPartsData = nullptr;
+    std::array<float, 4> mScreenColor = {0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 4> mMultiplyColor = {1.0f, 1.0f, 1.0f, 0.0f};
+
+private:
+    float mPartsOpacity = 1.0f;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\PhysicsHair.hpp --------
+#pragma once
+#include <string>
+#include <vector>
+namespace live2d {
+class ALive2DModel;
+
+enum PhysicsSrcType { SRC_TO_X = 0, SRC_TO_Y, SRC_TO_G_ANGLE };
+enum PhysicsTargetType { TARGET_FROM_ANGLE = 0, TARGET_FROM_ANGLE_V };
+
+struct PhysicsPoint {
+    float mass = 1, x = 0, y = 0, vx = 0, vy = 0, ax = 0, ay = 0, fx = 0, fy = 0;
+    float lastX = 0, lastY = 0, lastVX = 0, lastVY = 0;
+    void setupLast() { lastX = x; lastY = y; lastVX = vx; lastVY = vy; }
+};
+
+struct PhysicsSrc {
+    PhysicsSrcType type; std::string paramId; float scale = 1, weight = 1;
+    void update(ALive2DModel* model, class PhysicsHair* ctx);
+};
+struct PhysicsTarget {
+    PhysicsTargetType type; std::string paramId; float scale = 1, weight = 1;
+    void update(ALive2DModel* model, class PhysicsHair* ctx);
+};
+
+class PhysicsHair {
+public:
+    PhysicsHair();
+    void setup(float length, float stiffness, float mass);
+    void addSrcParam(PhysicsSrcType t, const std::string& id, float scale, float weight);
+    void addTargetParam(PhysicsTargetType t, const std::string& id, float scale, float weight);
+    void update(ALive2DModel* model, long long timeMs);
+
+    PhysicsPoint& getP1() { return p1; }
+    PhysicsPoint& getP2() { return p2; }
+    float getAngle() const { return angle; }
+    void setAngle(float a) { angle = a; }
+    float getLastAngle() const { return lastAngle; }
+    float getLastAngleVelocity() const { return angleVelocity; }
+
+private:
+    float calcAngle() const;
+    void updatePhysics(ALive2DModel* model, float deltaSec);
+
+    PhysicsPoint p1, p2;
+    float length = 0, angle = 0, stiffness = 0;
+    float lastAngle = 0, currentAngle = 0, angleVelocity = 0;
+    long long lastTime = 0, currentTime = 0;
+    std::vector<PhysicsSrc> sourceParams;
+    std::vector<PhysicsTarget> targetParams;
+};
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\PivotManager.hpp --------
+#pragma once
+
+#include <cstdint>
+#include "ISerializable.hpp"
+#include <vector>
+
+namespace live2d {
+
+class ParamPivots;
+class ModelContext;
+
+class PivotManager final : public ISerializable {
+public:
+    PivotManager() = default;
+
+    void read(class BinaryReader& br) override;
+
+    bool checkParamUpdated(ModelContext* modelContext);
+    int calcPivotValues(ModelContext* modelContext, bool& outRet);
+    void calcPivotIndices(std::vector<int16_t>& indexArray, std::vector<float>& tArray, int interpolationCount);
+
+    int getParamCount() const { return static_cast<int>(mParamPivotTable.size()); }
+
+private:
+    std::vector<ParamPivots*> mParamPivotTable;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\RotationContext.hpp --------
+#pragma once
+
+#include "DeformerContext.hpp"
+
+namespace live2d {
+
+class RotationDeformer;
+class AffineEnt;
+
+class RotationContext final : public DeformerContext {
+public:
+    explicit RotationContext(RotationDeformer* deformer);
+
+    RotationDeformer* mRotationDeformer;
+    AffineEnt* mInterpolatedAffine = nullptr;
+    AffineEnt* mTransformedAffine = nullptr;
+
+    ~RotationContext();
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\RotationDeformer.hpp --------
+#pragma once
+
+#include "Deformer.hpp"
+#include <vector>
+
+namespace live2d {
+
+class PivotManager;
+class AffineEnt;
+
+class RotationDeformer final : public Deformer {
+public:
+    RotationDeformer() = default;
+
+    int getType() const override { return TYPE_ROTATION; }
+    void read(class BinaryReader& br) override;
+    DeformerContext* init(ModelContext* mc) override;
+    void setupInterpolate(ModelContext* mc, DeformerContext* dc) override;
+    bool setupTransform(ModelContext* mc, DeformerContext* dc) override;
+    void transformPoints(ModelContext* mc, DeformerContext* dc,
+                         const std::vector<float>& srcPoints, std::vector<float>& dstPoints,
+                         int numPoint, int ptOffset, int ptStep) override;
+
+    PivotManager* mPivotManager = nullptr;
+    std::vector<AffineEnt*> mAffines;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\UtInterpolate.hpp --------
+#pragma once
+
+#include <vector>
+
+namespace live2d {
+
+class ModelContext;
+class PivotManager;
+
+class UtInterpolate {
+public:
+    static float interpolateFloat(ModelContext* mdc, PivotManager* pivotMgr, bool& ret,
+                                  const std::vector<float>& values);
+    static int interpolateInt(ModelContext* mdc, PivotManager* pivotMgr, bool& ret,
+                              const std::vector<int>& values);
+    static void interpolatePoints(ModelContext* mdc, PivotManager* pivotMgr, bool& ret,
+                                  int pointCount,
+                                  const std::vector<std::vector<float>>& pivotPoints,
+                                  std::vector<float>& dstPoints, int ptOffset, int ptStep);
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\UtMath.hpp --------
+#pragma once
+
+#include <cmath>
+
+namespace live2d {
+
+class UtMath {
+public:
+    static constexpr float DEG_TO_RAD = 0.017453292519943295f;
+    static constexpr float RAD_TO_DEG = 57.29577951308232f;
+
+    static float getAngleNotAbs(const float v1[2], const float v2[2]) {
+        // Match Python UtMath.getAngleNotAbs: getAngleDiff(atan2(v1), atan2(v2))
+        // = q1 - q2 normalized to [-π, π]
+        float q1 = std::atan2(v1[1], v1[0]);
+        float q2 = std::atan2(v2[1], v2[0]);
+        float t = q1 - q2;
+        while (t < -3.14159265f) t += 2.0f * 3.14159265f;
+        while (t >  3.14159265f) t -= 2.0f * 3.14159265f;
+        return t;
+    }
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\UtSystem.hpp --------
+#pragma once
+
+#include <cstdint>
+
+namespace live2d {
+
+class UtSystem {
+public:
+    static double getUserTimeMSec();
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\WarpContext.hpp --------
+#pragma once
+
+#include "DeformerContext.hpp"
+#include <vector>
+
+namespace live2d {
+
+class WarpDeformer;
+
+class WarpContext final : public DeformerContext {
+public:
+    explicit WarpContext(WarpDeformer* deformer);
+
+    WarpDeformer* mWarpDeformer;
+    std::vector<float> mInterpolatedPoints;
+    std::vector<float> mTransformedPoints;
+};
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\include\WarpDeformer.hpp --------
+#pragma once
+
+#include "Deformer.hpp"
+#include <vector>
+
+namespace live2d {
+
+class PivotManager;
+
+class WarpDeformer final : public Deformer {
+public:
+    WarpDeformer() = default;
+
+    int getType() const override { return TYPE_WARP; }
+    void read(class BinaryReader& br) override;
+    DeformerContext* init(ModelContext* mc) override;
+    void setupInterpolate(ModelContext* mc, DeformerContext* dc) override;
+    bool setupTransform(ModelContext* mc, DeformerContext* dc) override;
+    void transformPoints(ModelContext* mc, DeformerContext* dc,
+                         const std::vector<float>& srcPoints, std::vector<float>& dstPoints,
+                         int numPoint, int ptOffset, int ptStep) override;
+
+    int getPointCount() const { return (mRow + 1) * (mCol + 1); }
+
+    static void transformPoints_sdk2(const std::vector<float>& src,
+                                      std::vector<float>& dst,
+                                      int pointCount, int srcOffset, int srcStep,
+                                      const std::vector<float>& grid, int row, int col);
+
+    int mRow = 0;
+    int mCol = 0;
+    PivotManager* mPivotMgr = nullptr;
+    std::vector<std::vector<float>> mPivotPoints;
+};
+
+} // namespace live2d
+
+

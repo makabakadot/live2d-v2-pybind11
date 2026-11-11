@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="..\..\..\..\LibPaths.props" Label="OffRenderLibPaths" />
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{2c8386ca-41ec-4f98-98da-806d5b04701d}</ProjectGuid>
+    <RootNamespace>CppLive2dReplace</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <TargetName>v2</TargetName>
+    <TargetExt>.pyd</TargetExt>
+    <IncludePath>$(LibRoot)Live2d\v2\sdk\RelativeCode\Json;$(LibRoot)Live2d\v2\sdk\RelativeCode\Glad\include;$(LibRoot)Live2d\v2\sdk\RelativeCode\Common;$(LibRoot)Live2d\v2\CppLive2dReplace\CppLive2dReplace\Header;$(LibRoot)ThirdParty\eigen;$(LibRoot)ThirdParty\pybind11\include;$(LibRoot)Live2d\v2\CppLive2dReplace\Sorce\include;$(PythonRoot)\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(PythonRoot)\libs;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>python3.lib;python313.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="$(LibRoot)Live2d\v2\sdk\RelativeCode\Glad\src\glad.c" />
+    <ClCompile Include="..\Sorce\src\AffineEnt.cpp" />
+    <ClCompile Include="..\Sorce\src\ALive2DModel.cpp" />
+    <ClCompile Include="..\Sorce\src\Avatar.cpp" />
+    <ClCompile Include="..\Sorce\src\BinaryReader.cpp" />
+    <ClCompile Include="..\Sorce\src\ClipContext.cpp" />
+    <ClCompile Include="..\Sorce\src\Deformer.cpp" />
+    <ClCompile Include="..\Sorce\src\Id.cpp" />
+    <ClCompile Include="..\Sorce\src\IDrawData.cpp" />
+    <ClCompile Include="..\Sorce\src\L2DBaseModel.cpp" />
+    <ClCompile Include="..\Sorce\src\L2DExpressionMotion.cpp" />
+    <ClCompile Include="..\Sorce\src\L2DEyeBlink.cpp" />
+    <ClCompile Include="..\Sorce\src\L2DMatrix44.cpp" />
+    <ClCompile Include="..\Sorce\src\L2DModelMatrix.cpp" />
+    <ClCompile Include="..\Sorce\src\L2DMotionManager.cpp" />
+    <ClCompile Include="..\Sorce\src\L2DPhysics.cpp" />
+    <ClCompile Include="..\Sorce\src\L2DPose.cpp" />
+    <ClCompile Include="..\Sorce\src\L2DTargetPoint.cpp" />
+    <ClCompile Include="..\Sorce\src\LAppModel.cpp" />
+    <ClCompile Include="..\Sorce\src\Live2DModelRender.cpp" />
+    <ClCompile Include="..\Sorce\src\Live2DMotion.cpp" />
+    <ClCompile Include="..\Sorce\src\Live2DObjectFactory.cpp" />
+    <ClCompile Include="..\Sorce\src\MatrixManager.cpp" />
+    <ClCompile Include="..\Sorce\src\Mesh.cpp" />
+    <ClCompile Include="..\Sorce\src\ModelContext.cpp" />
+    <ClCompile Include="..\Sorce\src\ModelImpl.cpp" />
+    <ClCompile Include="..\Sorce\src\ParamDefFloat.cpp" />
+    <ClCompile Include="..\Sorce\src\ParamDefSet.cpp" />
+    <ClCompile Include="..\Sorce\src\ParamPivots.cpp" />
+    <ClCompile Include="..\Sorce\src\PartsData.cpp" />
+    <ClCompile Include="..\Sorce\src\PartsDataContext.cpp" />
+    <ClCompile Include="..\Sorce\src\PhysicsHair.cpp" />
+    <ClCompile Include="..\Sorce\src\PivotManager.cpp" />
+    <ClCompile Include="..\Sorce\src\RotationContext.cpp" />
+    <ClCompile Include="..\Sorce\src\RotationDeformer.cpp" />
+    <ClCompile Include="..\Sorce\src\stb_impl.cpp" />
+    <ClCompile Include="..\Sorce\src\UtInterpolate.cpp" />
+    <ClCompile Include="..\Sorce\src\UtSystem.cpp" />
+    <ClCompile Include="..\Sorce\src\WarpContext.cpp" />
+    <ClCompile Include="..\Sorce\src\WarpDeformer.cpp" />
+    <ClCompile Include="Binding.cpp" />
+    <ClCompile Include="OpenGlRender.cpp" />
+    <ClCompile Include="Render.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Logging.hpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

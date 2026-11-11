@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <BuildType Name="Release" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="CppLive2dReplace/CppLive2dReplace/CppLive2dReplace.vcxproj" />
+  <Project Path="v2/V2_independent_Render/V2_independent_Render/V2_independent_Render.vcxproj" />
+</Solution>
