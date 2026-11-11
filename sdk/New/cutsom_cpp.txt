@@ -1,0 +1,4969 @@
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\CppLive2dReplace\Binding.cpp --------
+#include <LAppModel.hpp>
+#include <pybind11/pybind11.h>
+#include <GL/glew.h>
+//#include <DrawParamOpenGL.hpp>
+#include <pybind11/stl.h>
+#include <pybind11/functional.h>
+#include "Id.hpp"
+class PyRender :public live2d::Render
+{
+public:
+	void setupDraw() override
+	{
+		PYBIND11_OVERRIDE_PURE(
+			void, // 返回值类型
+			Render,      // 父类
+			setupDraw         // C++函数名（需与Python方法名匹配）
+		);
+	}
+	void  endDraw() override
+	{
+		PYBIND11_OVERRIDE_PURE(
+			void, // 返回值类型
+			Render,      // 父类
+			endDraw         // C++函数名（需与Python方法名匹配）
+		);
+	}
+	void drawTexture(int texNo,
+		const std::array<float, 4>& screenColor,
+		const std::vector<int16_t>& indices,
+		const std::vector<float>& vertices,
+		const std::vector<float>& uvs,
+		float opacity, int compositionType,
+		const std::array<float, 4>& multiplyColor) override
+	{
+		PYBIND11_OVERRIDE_PURE(
+			void, // 返回值类型
+			Render,      // 父类
+			drawTexture,
+			texNo,
+			screenColor,
+			indices,
+			vertices,
+			uvs,
+			opacity,
+			compositionType,
+			multiplyColor
+		);
+	}
+	void clearBuffer(float r, float g, float b, float a) override
+	{
+
+		PYBIND11_OVERRIDE_PURE(
+			void, // 返回值类型
+			Render,      // 父类
+			clearBuffer,
+			r, g, b, a
+
+		);
+	}
+	void setTexture(int no, std::vector<uint8_t> data) override
+	{
+		PYBIND11_OVERRIDE_PURE(
+			void, // 返回值类型
+			Render,      // 父类
+			setTexture,
+			no, data
+
+		);
+	}
+
+	//void setupClip(live2d::ModelContext* mc) override{
+	//	PYBIND11_OVERRIDE(
+	//		void, // 返回值类型
+	//		Render,      // 基类
+	//		setupClip,       // 函数名
+	//		mc
+	//		);
+	//};
+	void enterMaskRendering() override
+	{
+		PYBIND11_OVERRIDE_PURE(
+			void, // 返回值类型
+			Render,      // 父类
+			enterMaskRendering,
+			);
+	}
+	void exitMaskRendering() override
+	{
+		PYBIND11_OVERRIDE_PURE(
+			void, // 返回值类型
+			Render,      // 父类
+			exitMaskRendering,
+			);
+	}
+};
+PYBIND11_MODULE(v2,m)
+{
+
+
+	m.def("ClearIds", &live2d::Id::releaseStored);
+	pybind11::class_<live2d::LAppModel>(m, "LAppModel")
+		.def(pybind11::init<>())
+		.def(pybind11::init<std::shared_ptr<live2d::Render>>())
+		.def("Resize", &live2d::LAppModel::resize)
+		.def("Update",&live2d::LAppModel::update)
+		.def("Draw", &live2d::LAppModel::draw)
+		.def("LoadModelJson",&live2d::LAppModel::loadModelJson)
+		.def("StartMotion", &live2d::LAppModel::startMotion);
+	m.def("ClearBuffer", [](float a, float b, float c, float d)
+		{
+			live2d::ClearBuffer(a,b,c,d);
+
+		});
+}
+
+
+
+
+
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\CppLive2dReplace\OpenGlRender.cpp --------
+#include "OpenGlRender.hpp"
+#include <iostream>
+#include <string>
+#include <ClipContext.hpp>
+#include <IDrawData.hpp>
+#include <MeshContext.hpp>
+#include <ModelContext.hpp>
+#include <ALive2DModel.hpp>
+#include <DEF.hpp>
+#include <Mesh.hpp>
+
+// GLSL shaders – exact match of Python v2 draw_param_opengl.py
+// Version string (first line of each shader)
+#define SHADER_VER "#version 120\n"
+
+// -- Normal vertex (aK in Python) -- v_clipPos = gl_Position
+static const char* sVertNormal = SHADER_VER
+"attribute vec2 a_position;"
+"attribute vec2 a_texCoord;"
+"varying vec2 v_texCoord;"
+"varying vec4 v_clipPos;"
+"uniform mat4 u_mvpMatrix;"
+"void main(){"
+"    gl_Position = u_mvpMatrix * vec4(a_position, 0.0, 1.0);"
+"    v_clipPos = gl_Position;"
+"    v_texCoord = a_texCoord;"
+"    v_texCoord.y = 1.0 - v_texCoord.y;"
+"}";
+
+// -- Normal fragment (aM in Python) -- with u_maskFlag for mask rendering pass
+static const char* sFragNormal = SHADER_VER
+"#ifdef GL_ES\n"
+"precision mediump float;\n"
+"#endif\n"
+"varying vec2 v_texCoord;"
+"varying vec4 v_clipPos;"
+"uniform sampler2D s_texture0;"
+"uniform vec4 u_channelFlag;"
+"uniform vec4 u_baseColor;"
+"uniform bool u_maskFlag;"
+"uniform vec4 u_screenColor;"
+"uniform vec4 u_multiplyColor;"
+"void main(){"
+"    vec4 smpColor;"
+"    if(u_maskFlag){"
+"        float isInside = "
+"            step(u_baseColor.x, v_clipPos.x/v_clipPos.w)"
+"          * step(u_baseColor.y, v_clipPos.y/v_clipPos.w)"
+"          * step(v_clipPos.x/v_clipPos.w, u_baseColor.z)"
+"          * step(v_clipPos.y/v_clipPos.w, u_baseColor.w);"
+"        smpColor = u_channelFlag * texture2D(s_texture0, v_texCoord).a * isInside;"
+"    }else{"
+"        smpColor = texture2D(s_texture0, v_texCoord);"
+"        smpColor.rgb = smpColor.rgb * smpColor.a;"
+"        smpColor.rgb = smpColor.rgb * u_multiplyColor.rgb;"
+"        smpColor.rgb = smpColor.rgb + u_screenColor.rgb - (smpColor.rgb * u_screenColor.rgb);"
+"        smpColor = smpColor * u_baseColor;"
+"    }"
+"    gl_FragColor = smpColor;"
+"}";
+
+// -- Mask vertex (aL in Python) -- v_clipPos = u_clipMatrix * pos; u_mvpMatrix for position
+static const char* sVertMask = SHADER_VER
+"attribute vec2 a_position;"
+"attribute vec2 a_texCoord;"
+"varying vec2 v_texCoord;"
+"varying vec4 v_clipPos;"
+"uniform mat4 u_mvpMatrix;"
+"uniform mat4 u_clipMatrix;"
+"void main(){"
+"    vec4 pos = vec4(a_position, 0.0, 1.0);"
+"    gl_Position = u_mvpMatrix * pos;"
+"    v_clipPos = u_clipMatrix * pos;"
+"    v_texCoord = a_texCoord;"
+"    v_texCoord.y = 1.0 - v_texCoord.y;"
+"}";
+
+// -- Mask fragment (aJ in Python)
+static const char* sFragMask = SHADER_VER
+"#ifdef GL_ES\n"
+"precision mediump float;\n"
+"#endif\n"
+"varying vec2 v_texCoord;"
+"varying vec4 v_clipPos;"
+"uniform sampler2D s_texture0;"
+"uniform sampler2D s_texture1;"
+"uniform vec4 u_channelFlag;"
+"uniform vec4 u_baseColor;"
+"uniform vec4 u_screenColor;"
+"uniform vec4 u_multiplyColor;"
+"void main(){"
+"    vec4 col_formask = texture2D(s_texture0, v_texCoord);"
+"    col_formask.rgb = col_formask.rgb * col_formask.a;"
+"    col_formask.rgb = col_formask.rgb * u_multiplyColor.rgb;"
+"    col_formask.rgb = col_formask.rgb + u_screenColor.rgb - (col_formask.rgb * u_screenColor.rgb);"
+"    col_formask = col_formask * u_baseColor;"
+"    vec4 clipMask = texture2D(s_texture1, v_clipPos.xy / v_clipPos.w) * u_channelFlag;"
+"    float maskVal = clipMask.r + clipMask.g + clipMask.b + clipMask.a;"
+"    col_formask = col_formask * maskVal;"
+"    gl_FragColor = col_formask;"
+"}";
+
+
+void live2d::ClearBuffer(float r, float g, float b, float a)
+{
+    glClearColor(r, g, b, a);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
+GLuint createShader(const char* vertexShaderCode, const char* fragShaderCode)
+{
+    GLuint vertex = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertex, 1, &vertexShaderCode,nullptr);
+    glCompileShader(vertex);
+    GLint ok;
+    glGetShaderiv(vertex, GL_COMPILE_STATUS, &ok);
+    if (!ok)
+    {
+        char buf[512];
+        glGetShaderInfoLog(vertex, 512, nullptr, buf);
+        std::cout << "Vertex Shader Error: "<<buf << std::endl;
+    }
+
+    GLuint frag = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(frag, 1, &fragShaderCode, nullptr);
+    glCompileShader(frag);
+
+    glGetShaderiv(frag, GL_COMPILE_STATUS, &ok);
+    if (!ok)
+    {
+        char buf[512];
+        glGetShaderInfoLog(frag, 512, nullptr, buf);
+        std::cout << "Fragment Shader Error: " << buf << std::endl;
+    }
+
+    GLuint Programme = glCreateProgram();
+    glAttachShader(Programme,vertex);
+    glAttachShader(Programme, frag);
+
+    glBindAttribLocation(Programme, 0, "a_position");
+    glBindAttribLocation(Programme, 1, "a_texCoord");
+    glLinkProgram(Programme);
+    // Check link status
+    GLint linked;
+    glGetProgramiv(Programme, GL_LINK_STATUS, &linked);
+    if (!linked)
+    {
+        char buf[512];
+        glGetProgramInfoLog(Programme, 512, nullptr, buf);
+        std::cout << "Normal Shader Link Error: " << buf << std::endl;
+    }
+    glDeleteShader(vertex);
+    glDeleteShader(frag);
+    return Programme;
+}
+
+
+live2d::OpenGlRender::OpenGlRender():Render()
+{	
+    if (!gladLoadGL())
+    {
+        throw std::runtime_error("Can't init OpenGL");
+    }
+	mTextures.resize(32, 0);
+    this->createFramebuffer();
+    //ClippingManagerOpenGL
+}
+
+live2d::OpenGlRender::~OpenGlRender()
+{
+	if (mShaderNormal) glDeleteProgram(mShaderNormal);
+	if (mShaderMask) glDeleteProgram(mShaderMask);
+	if (mFramebuffer) glDeleteFramebuffers(1, &mFramebuffer);
+	if (mFramebufferTexture) glDeleteTextures(1, &mFramebufferTexture);
+	if (mEBO) glDeleteBuffers(1, &mEBO);
+	if (mPosVBO) glDeleteBuffers(1, &mPosVBO);
+	if (mUVVBO) glDeleteBuffers(1, &mUVVBO);
+	for (auto t : mTextures) if (t) glDeleteTextures(1, &t);
+}
+
+void live2d::OpenGlRender::setupDraw()
+{
+    lazyInit();
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, (GLint*)&mCurrentFBO);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glFrontFace(GL_CW);
+    glEnable(GL_BLEND);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+}
+
+void live2d::OpenGlRender::endDraw()
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, mCurrentFBO);
+}
+
+void live2d::OpenGlRender::drawTexture(int texNo, 
+    const std::array<float, 4>& screenColor, 
+    const std::vector<int16_t>& indices,
+    const std::vector<float>& vertices, 
+    const std::vector<float>& uvs, 
+    float opacity, 
+    int compositionType, 
+    const std::array<float, 4>& multiplyColor)
+{
+    if (opacity < 0.01f && mClipMaskCtx == nullptr) return;
+
+    float a_w = mBaseRed * opacity;
+    float a2 = mBaseGreen * opacity;
+    float a5 = mBaseBlue * opacity;
+    float a7 = mBaseAlpha * opacity;
+
+    static int sDrawCallNo = 0;
+    sDrawCallNo++;
+    int callNo = sDrawCallNo;
+    const char* path = mClipMaskCtx ? "MASK" : mClipDrawCtx ? "CLIP" : "NORM";
+
+
+    if (mClipMaskCtx)
+    {
+        // Path 1: Mask RENDER — use clip's matrixForMask as u_mvpMatrix
+        glFrontFace(GL_CCW);
+        glUseProgram(mShaderNormal);
+        GLuint p = mShaderNormal;
+        glUniformMatrix4fv(glGetUniformLocation(p, "u_mvpMatrix"), 1, GL_FALSE, mClipMatrix.data());
+        glUniform1i(glGetUniformLocation(p, "u_maskFlag"), 1);
+        // u_baseColor = clip rect (full [-1,1] for full-FBO mask render)
+        glUniform4f(glGetUniformLocation(p, "u_baseColor"), -1.0f, -1.0f, 1.0f, 1.0f);
+        float chR = (mClipChannel == 0) ? 1.0f : 0, chG = (mClipChannel == 1) ? 1.0f : 0, chB = (mClipChannel == 2) ? 1.0f : 0, chA = (mClipChannel == 3) ? 1.0f : 0;
+        // Channel color: R=ch0, G=ch1, B=ch2, A=ch3
+        float cR = (mClipChannel == 0) ? 1.0f : 0, cG = (mClipChannel == 1) ? 1.0f : 0,
+            cB = (mClipChannel == 2) ? 1.0f : 0, cA = (mClipChannel == 3) ? 1.0f : 0;
+        glUniform4f(glGetUniformLocation(p, "u_channelFlag"), cR, cG, cB, cA);
+        glUniform4f(glGetUniformLocation(p, "u_screenColor"), 0, 0, 0, 0);
+        glUniform4f(glGetUniformLocation(p, "u_multiplyColor"), 1, 1, 1, 0);
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, getTexture(texNo));
+        glUniform1i(glGetUniformLocation(p, "s_texture0"), 1);
+    }
+    else if (mClipDrawCtx)
+    {
+        // Path 2: Clipped DRAW — uses mask FBO
+        glUseProgram(mShaderMask);
+        GLuint p = mShaderMask;
+        glUniformMatrix4fv(glGetUniformLocation(p, "u_mvpMatrix"), 1, GL_FALSE, mMatrix4x4.data());
+        glUniformMatrix4fv(glGetUniformLocation(p, "u_clipMatrix"), 1, GL_FALSE, mClipMatrix.data());
+        glUniform4f(glGetUniformLocation(p, "u_baseColor"), a_w, a2, a5, a7);
+        glUniform4f(glGetUniformLocation(p, "u_screenColor"), screenColor[0], screenColor[1], screenColor[2], screenColor[3]);
+        glUniform4f(glGetUniformLocation(p, "u_multiplyColor"), multiplyColor[0], multiplyColor[1], multiplyColor[2], multiplyColor[3]);
+        float chR = (mClipChannel == 0) ? 1.0f : 0, chG = (mClipChannel == 1) ? 1.0f : 0, chB = (mClipChannel == 2) ? 1.0f : 0, chA = (mClipChannel == 3) ? 1.0f : 0;
+        glUniform4f(glGetUniformLocation(p, "u_channelFlag"), chR, chG, chB, chA);
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, getTexture(texNo));
+        glUniform1i(glGetUniformLocation(p, "s_texture0"), 1);
+        glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, mFramebufferTexture);
+        glUniform1i(glGetUniformLocation(p, "s_texture1"), 2);
+        mClipDrawCtx = nullptr;
+    }
+    else
+    {
+        // Path 3: Normal draw
+        glUseProgram(mShaderNormal);
+        GLuint p = mShaderNormal;
+        glUniformMatrix4fv(glGetUniformLocation(p, "u_mvpMatrix"), 1, GL_FALSE, mMatrix4x4.data());
+        glUniform1i(glGetUniformLocation(p, "u_maskFlag"), 0);
+        glUniform4f(glGetUniformLocation(p, "u_baseColor"), a_w, a2, a5, a7);
+        glUniform4f(glGetUniformLocation(p, "u_screenColor"), screenColor[0], screenColor[1], screenColor[2], screenColor[3]);
+        glUniform4f(glGetUniformLocation(p, "u_multiplyColor"), multiplyColor[0], multiplyColor[1], multiplyColor[2], multiplyColor[3]);
+        glUniform4f(glGetUniformLocation(p, "u_channelFlag"), 0, 0, 0, 0);
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, getTexture(texNo));
+        glUniform1i(glGetUniformLocation(p, "s_texture0"), 1);
+        //glUniform1i(glGetUniformLocation(p, "s_texture1"), 2);
+    }
+
+    // Culling (match v2 Python)
+    if (mCulling)
+    {
+        glEnable(GL_CULL_FACE);
+    }
+    else
+    {
+        glDisable(GL_CULL_FACE);
+    }
+
+    glEnable(GL_BLEND);
+    // Match v2 Python blend modes exactly
+    // Python glBlendFuncSeparate(src_color, src_factor, dst_color, dst_factor)
+    //   maps to OpenGL: (srcRGB, dstRGB, srcAlpha, dstAlpha)
+    GLenum srcRGB, dstRGB, srcAlpha, dstAlpha;
+    if (mClipMaskCtx)
+    {
+        // MASK path: always use NORMAL blending
+        srcRGB = GL_ONE;
+        dstRGB = GL_ONE_MINUS_SRC_ALPHA;
+        srcAlpha = GL_ONE;
+        dstAlpha = GL_ONE_MINUS_SRC_ALPHA;
+    }
+    else
+    {
+        switch (compositionType)
+        {
+        case Render::COLOR_COMPOSITION_NORMAL:
+            srcRGB = GL_ONE;
+            dstRGB = GL_ONE_MINUS_SRC_ALPHA;
+            srcAlpha = GL_ONE;
+            dstAlpha = GL_ONE_MINUS_SRC_ALPHA;
+            break;
+        case Render::COLOR_COMPOSITION_SCREEN:
+            srcRGB = GL_ONE;
+            dstRGB = GL_ONE;
+            srcAlpha = GL_ZERO;
+            dstAlpha = GL_ONE;
+            break;
+        case Render::COLOR_COMPOSITION_MULTIPLY:
+            srcRGB = GL_DST_COLOR;
+            dstRGB = GL_ONE_MINUS_SRC_ALPHA;
+            srcAlpha = GL_ZERO;
+            dstAlpha = GL_ONE;
+            break;
+        default:
+            throw std::runtime_error("Unsupported composition type: " + std::to_string(compositionType));
+        }
+    }
+
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha);
+
+    // Debug: print blend function
+    auto blendName = [](GLenum e) -> const char*
+        {
+            switch (e)
+            {
+            case GL_ONE: return "ONE";
+            case GL_ZERO: return "ZERO";
+            case GL_DST_COLOR: return "DST_COLOR";
+            case GL_ONE_MINUS_SRC_ALPHA: return "ONE_MINUS_SRC_ALPHA";
+            case GL_ONE_MINUS_SRC_COLOR: return "ONE_MINUS_SRC_COLOR";
+            default: return "?";
+            }
+        };
+    // Position VBO (location 0)
+    if (!mPosVBO) glGenBuffers(1, &mPosVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, mPosVBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glEnableVertexAttribArray(0);
+
+    // UV VBO (location 1)
+    if (!mUVVBO) glGenBuffers(1, &mUVVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, mUVVBO);
+    glBufferData(GL_ARRAY_BUFFER, uvs.size() * sizeof(float), uvs.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glEnableVertexAttribArray(1);
+
+    // EBO
+    if (!mEBO) glGenBuffers(1, &mEBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(int16_t), indices.data(), GL_STATIC_DRAW);
+
+    // Debug: verify actual GL blend state
+    static int sBlendCheck = 0;
+    if (getenv("V2CPP_DUMP") && sBlendCheck < 80)
+    {
+        GLint actualSrcRGB, actualDstRGB, actualSrcA, actualDstA;
+        GLint actualEqRGB, actualEqA;
+        glGetIntegerv(GL_BLEND_SRC_RGB, &actualSrcRGB);
+        glGetIntegerv(GL_BLEND_DST_RGB, &actualDstRGB);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &actualSrcA);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &actualDstA);
+        glGetIntegerv(GL_BLEND_EQUATION_RGB, &actualEqRGB);
+        glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &actualEqA);
+        GLint srgb; glGetIntegerv(GL_FRAMEBUFFER_SRGB, &srgb);
+        fprintf(stderr, "  [BLEND_CHECK#%d] set=(%d,%d,%d,%d) actual=(%d,%d,%d,%d) eq=(%d,%d) sRGB=%d\n",
+            sBlendCheck, srcRGB, dstRGB, srcAlpha, dstAlpha,
+            actualSrcRGB, actualDstRGB, actualSrcA, actualDstA,
+            actualEqRGB, actualEqA, srgb);
+        sBlendCheck++;
+    }
+    glDrawElements(GL_TRIANGLES, (GLsizei)indices.size(), GL_UNSIGNED_SHORT, 0);
+
+    glDisableVertexAttribArray(0);
+    glDisableVertexAttribArray(1);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+}
+
+void live2d::OpenGlRender::clearBuffer(float r, float g, float b, float a)
+{
+    ClearBuffer(r,g,b, a);
+}
+
+
+
+void live2d::OpenGlRender::bindFramebuffer(int fb)
+{   
+    glBindFramebuffer(GL_FRAMEBUFFER, fb ? fb : mCurrentFBO);
+}
+void live2d::OpenGlRender::setTexture(int no, GLuint texId)
+{
+    if (no >= (int)mTextures.size()) mTextures.resize(no + 1, 0);
+    mTextures[no] = texId;
+}
+
+void live2d::OpenGlRender::setTexture(int no, std::vector<uint8_t> texData)
+{
+    int w, h, n;
+    unsigned char* pixels = texData.empty() ? nullptr :
+        stbi_load_from_memory(texData.data(), (int)texData.size(), &w, &h, &n, 4);
+    if (!pixels) return;
+    //Info("Load texture: %s", texPaths[i].c_str());
+
+    GLuint texId;
+    glGenTextures(1, &texId);
+    glBindTexture(GL_TEXTURE_2D, texId);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    //setTexture((int)i, (int)texId);
+    if (no >= (int)mTextures.size()) mTextures.resize(no + 1, 0);
+    if (mTextures[no] != 0)
+    {
+        glDeleteTextures(1, &mTextures[no]);   // 缺少这一行
+    }
+    mTextures[no] = texId;
+
+    stbi_image_free(pixels);
+
+}
+GLuint live2d::OpenGlRender::getTexture(int no)
+{
+    if (no >= 0 && no < (int)mTextures.size()) return mTextures[no];
+    return 0;
+}
+
+
+int live2d::OpenGlRender::createFramebuffer()
+{
+	if (mFramebuffer == 0) glGenFramebuffers(1, &mFramebuffer);
+	if (mFramebufferTexture == 0) glGenTextures(1, &mFramebufferTexture);
+
+	glBindTexture(GL_TEXTURE_2D, mFramebufferTexture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 256, 256, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mFramebufferTexture, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, mCurrentFBO);
+
+	return (int)mFramebuffer;
+}
+
+GLuint live2d::OpenGlRender::createVBO(const std::vector<float>& data, int loc, int size)
+{
+    GLuint vbo;
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(loc, size, GL_FLOAT, GL_FALSE, 0, 0);
+    glEnableVertexAttribArray(loc);
+    return vbo;
+}
+
+GLuint live2d::OpenGlRender::createEBO(const std::vector<int16_t>& data)
+{
+    GLuint ebo;
+    glGenBuffers(1, &ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, data.size() * sizeof(int16_t), data.data(), GL_STATIC_DRAW);
+    return ebo;
+}
+
+void live2d::OpenGlRender::lazyInit()
+{
+    mShaderNormal =createShader(sVertNormal, sFragNormal);
+    mShaderMask = createShader(sVertMask,sFragMask);
+}
+
+//void live2d::OpenGlRender::setupClip(ModelContext* mc)
+//{
+//    int activeCount = 0;
+//    for (auto* clip : mClipContextList)
+//    {
+//        calcClippedDrawTotalBounds(mc, clip);
+//        if (clip->mIsUsing) activeCount++;
+//    }
+//    if (activeCount == 0) return;
+//
+//    // Save current viewport
+//    GLint savedViewport[4];
+//    glGetIntegerv(GL_VIEWPORT, savedViewport);
+//
+//    this->bindFramebuffer(this->mFramebuffer);
+//    glViewport(0, 0, CLIP_MASK_SIZE, CLIP_MASK_SIZE);
+//    glClearColor(0, 0, 0, 0);
+//    glClear(GL_COLOR_BUFFER_BIT);
+//
+//    setupLayoutBounds(activeCount);
+//
+//    for (auto* clip : mClipContextList)
+//    {
+//        if (!clip->mIsUsing) continue;
+//
+//        buildClipMatrix(clip->mMatrixForMask, clip, true);
+//        buildClipMatrix(clip->mMatrixForDraw, clip, false);
+//
+//        // Store clip matrix for DRAW on all clipped contexts
+//        for (int idx : clip->mClippedDrawIndexList)
+//        {
+//            auto* ctx = mc->getDrawContext(idx);
+//            std::memcpy(ctx->mClipMatrixForDraw, clip->mMatrixForDraw.data(), 16 * sizeof(float));
+//        }
+//
+//        // Render mask SOURCE drawables to FBO via mask render path
+//        for (int idx : clip->mClippingMaskDrawIndexList)
+//        {
+//            auto* dd = static_cast<Mesh*>(mc->getDrawData(idx));
+//            auto* ctx = mc->getDrawContext(idx);
+//            this->setClipMatrix(this->mMatrixForMask.data());
+//            this->mClipChannel = this->mLayoutChannelNo;
+//            this->setClipBufPre_clipContextForMask((void*)1);
+//            this->draw(this, mc, ctx);
+//            this->setClipBufPre_clipContextForMask(nullptr);
+//        }
+//    }
+//
+//    this->bindFramebuffer(0);
+//    glViewport(savedViewport[0], savedViewport[1], savedViewport[2], savedViewport[3]);
+//}
+
+void live2d::OpenGlRender::enterMaskRendering()
+{
+    // Save current viewport
+    
+    glGetIntegerv(GL_VIEWPORT, savedViewport);
+
+    this->bindFramebuffer(this->mFramebuffer);
+    glViewport(0, 0, CLIP_MASK_SIZE, CLIP_MASK_SIZE);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
+void live2d::OpenGlRender::exitMaskRendering()
+{
+    this->bindFramebuffer(0);
+    glViewport(savedViewport[0], savedViewport[1], savedViewport[2], savedViewport[3]);
+}
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\CppLive2dReplace\Render.cpp --------
+
+#include <Render.hpp>
+#include <IDrawContext.hpp>
+#include <IDrawData.hpp>
+#include <ModelContext.hpp>
+#include <MeshContext.hpp>
+#include <DEF.hpp>
+#include <ALive2DModel.hpp>
+#include <Mesh.hpp>
+live2d::Render::Render()
+{
+	mChannelColors.resize(CHANNEL_COUNT);
+	mChannelColors[0] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	mChannelColors[1] = { 1.0f, 0.0f, 0.0f, 0.0f };
+	mChannelColors[2] = { 0.0f, 1.0f, 0.0f, 0.0f };
+	mChannelColors[3] = { 0.0f, 0.0f, 1.0f, 0.0f };
+}
+
+live2d::Render::~Render()
+{
+	for (auto* ctx : mClipContextList) delete ctx;
+}
+
+void live2d::Render::setMatrix(const float m[16])
+{
+	std::memcpy(mMatrix4x4.data(), m, 16 * sizeof(float));
+}
+
+void live2d::Render::setClipMatrix(const float m[16])
+{
+	std::memcpy(mClipMatrix.data(), m, 16 * sizeof(float));
+}
+void live2d::Render::setCulling(bool b)
+{
+    mCulling = b;
+}
+live2d::ClipContext* live2d::Render::findSameClip(const std::vector<ClipContext*>& list, const std::vector<std::string>& ids)
+{
+#ifdef LOGGING
+    std::cout << "Call:findSameClip" << std::endl;
+#endif // LOGGING
+    for (auto* ctx : list)
+    {
+        if (ctx->mClipIDList.size() != ids.size()) continue;
+        int match = 0;
+        for (auto& a : ctx->mClipIDList)
+            for (auto& b : ids)
+                if (a == b) { match++; break; }
+        if (match == (int)ids.size()) return ctx;
+    }
+    return nullptr;
+}
+
+void live2d::Render::init(ModelContext* mc, const std::vector<IDrawData*>& drawDataList, const std::vector<MeshContext*>& drawContextList)
+{
+    int clipCount = 0;
+    for (size_t i = 0; i < drawDataList.size(); i++)
+    {
+        auto* clipIDs = drawDataList[i]->getClipIDList();
+        if (!clipIDs || clipIDs->empty()) continue;
+        clipCount++;
+
+        auto* clipCtx = findSameClip(mClipContextList, *clipIDs);
+        if (!clipCtx)
+        {
+            clipCtx = new ClipContext(mc, *clipIDs);
+            mClipContextList.push_back(clipCtx);
+        }
+
+        auto* drawId = drawDataList[i]->getId();
+        int drawIdx = mc->getDrawDataIndex(drawId);
+        // Mask source: only the drawable matching the clip ID (dedup)
+        for (auto& cid : *clipIDs)
+        {
+            int maskIdx = mc->getDrawDataIndex(&Id::getID(cid));
+            if (maskIdx >= 0)
+            {
+                bool found = false;
+                for (int m : clipCtx->mClippingMaskDrawIndexList)
+                    if (m == maskIdx) { found = true; break; }
+                if (!found) clipCtx->mClippingMaskDrawIndexList.push_back(maskIdx);
+            }
+        }
+        // All drawables with this clip ID reference
+        clipCtx->addClippedDrawData(drawId->str(), drawIdx);
+        drawContextList[i]->mClipBufPre_clipContext = clipCtx;
+    }
+}
+void live2d::Render::calcClippedDrawTotalBounds(ModelContext* mc, ClipContext* clip)
+{
+#ifdef LOGGING
+    std::cout << "Call:calcClippedDrawTotalBounds" << std::endl;
+#endif // LOGGING
+
+	int canvasW = mc->mModel->getModelImpl()->getCanvasWidth();
+	int canvasH = mc->mModel->getModelImpl()->getCanvasHeight();
+	float maxDim = (float)std::max(canvasW, canvasH);
+	// Match v2 Python: Float32Array(a4) with trailing zeros makes min always 0
+	float minX = 0, minY = 0, maxX = 0, maxY = 0;
+
+	int nAvail = 0, nVertOk = 0;
+	for (int idx : clip->mClippedDrawIndexList)
+	{
+		auto* ctx = mc->getDrawContext(idx);
+		if (!ctx->mAvailable) continue;
+		nAvail++;
+
+		auto& pts = ctx->mTransformedPoints.empty()
+			? ctx->mInterpolatedPoints
+			: ctx->mTransformedPoints;
+		if (pts.size() < 2) continue;
+		nVertOk++;
+
+		float dminX = 1e9f, dmaxX = -1e9f, dminY = 1e9f, dmaxY = -1e9f;
+		for (size_t j = VERTEX_OFFSET; j < pts.size(); j += VERTEX_STEP)
+		{
+			float x = pts[j], y = pts[j + 1];
+			if (x < dminX)dminX = x; if (y < dminY)dminY = y;
+			if (x > dmaxX)dmaxX = x; if (y > dmaxY)dmaxY = y;
+			if (x < minX) minX = x;
+			if (y < minY) minY = y;
+			if (x > maxX) maxX = x;
+			if (y > maxY) maxY = y;
+		}
+	}
+
+	if (nVertOk == 0)
+	{
+		clip->mIsUsing = false;
+	}
+	else
+	{
+		clip->mAllClippedDrawRect[0] = minX;
+		clip->mAllClippedDrawRect[1] = minY;
+		clip->mAllClippedDrawRect[2] = maxX - minX;
+		clip->mAllClippedDrawRect[3] = maxY - minY;
+		clip->mIsUsing = true;
+	}
+}
+
+void live2d::Render::setupLayoutBounds(int count)
+{
+    int rows = count / CHANNEL_COUNT;
+    int remainder = count % CHANNEL_COUNT;
+    int idx = 0;
+
+    for (int ch = 0; ch < CHANNEL_COUNT; ch++)
+    {
+        int n = rows + (ch < remainder ? 1 : 0);
+        if (n == 1)
+        {
+            auto* clip = mClipContextList[idx++];
+            clip->mLayoutChannelNo = ch;
+            clip->mLayoutBounds[0] = 0; clip->mLayoutBounds[1] = 0;
+            clip->mLayoutBounds[2] = 1; clip->mLayoutBounds[3] = 1;
+        }
+        else if (n == 2)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                auto* clip = mClipContextList[idx++];
+                clip->mLayoutChannelNo = ch;
+                clip->mLayoutBounds[0] = (float)(i % 2) * 0.5f;
+                clip->mLayoutBounds[1] = 0;
+                clip->mLayoutBounds[2] = 0.5f;
+                clip->mLayoutBounds[3] = 1;
+            }
+        }
+        else if (n <= 4)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                auto* clip = mClipContextList[idx++];
+                clip->mLayoutChannelNo = ch;
+                clip->mLayoutBounds[0] = (float)(i % 2) * 0.5f;
+                clip->mLayoutBounds[1] = (float)(i / 2) * 0.5f;
+                clip->mLayoutBounds[2] = 0.5f;
+                clip->mLayoutBounds[3] = 0.5f;
+            }
+        }
+        else if (n <= 9)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                auto* clip = mClipContextList[idx++];
+                clip->mLayoutChannelNo = ch;
+                clip->mLayoutBounds[0] = (float)(i % 3) / 3.0f;
+                clip->mLayoutBounds[1] = (float)(i / 3) / 3.0f;
+                clip->mLayoutBounds[2] = 1.0f / 3.0f;
+                clip->mLayoutBounds[3] = 1.0f / 3.0f;
+            }
+        }
+    }
+}
+void live2d::Render::buildClipMatrix(std::array<float, 16>& out, ClipContext* clip, bool forMask)
+{
+    out.fill(0);
+    float bx = clip->mLayoutBounds[0], by = clip->mLayoutBounds[1];
+    float bw = clip->mLayoutBounds[2], bh = clip->mLayoutBounds[3];
+    float cx = clip->mAllClippedDrawRect[0], cy = clip->mAllClippedDrawRect[1];
+    float cw = clip->mAllClippedDrawRect[2], ch = clip->mAllClippedDrawRect[3];
+
+    if (cw <= 0 || ch <= 0) { out[0] = out[5] = out[10] = out[15] = 1; return; }
+
+    float pad = 0.05f;
+    float ex = cw * pad, ey = ch * pad;
+    float ew = cw + ex * 2, eh = ch + ey * 2;
+    float sx = bw / ew;
+    float sy = bh / eh;
+
+    if (forMask)
+    {
+        // v2 Python matrixForMask: T(-1,-1)*S(2,2)*T(lx,ly)*S(lw/ew,lh/eh)*T(-cx+ex,-cy+ey)
+        out[0] = 2.0f * sx;
+        out[5] = 2.0f * sy;
+        out[10] = 1.0f;
+        out[12] = -1.0f + 2.0f * bx - 2.0f * sx * (cx - ex);
+        out[13] = -1.0f + 2.0f * by - 2.0f * sy * (cy - ey);
+        out[15] = 1.0f;
+    }
+    else
+    {
+        // v2 Python matrixForDraw: T(lx,ly)*S(lw/ew,lh/eh)*T(-cx+ex,-cy+ey)
+        out[0] = sx;
+        out[5] = sy;
+        out[10] = 1.0f;
+        out[12] = bx - sx * (cx - ex);
+        out[13] = by - sy * (cy - ey);
+        out[15] = 1.0f;
+    }
+}
+void live2d::Render::setupClip(ModelContext* mc)
+{
+    int activeCount = 0;
+    for (auto* clip : mClipContextList)
+    {
+        calcClippedDrawTotalBounds(mc, clip);
+        if (clip->mIsUsing) activeCount++;
+    }
+    if (activeCount == 0) return;
+
+    this->enterMaskRendering();
+
+    setupLayoutBounds(activeCount);
+
+    for (auto* clip : mClipContextList)
+    {
+        if (!clip->mIsUsing) continue;
+
+        buildClipMatrix(clip->mMatrixForMask, clip, true);
+        buildClipMatrix(clip->mMatrixForDraw, clip, false);
+
+        // Store clip matrix for DRAW on all clipped contexts
+        for (int idx : clip->mClippedDrawIndexList)
+        {
+            auto* ctx = mc->getDrawContext(idx);
+            std::memcpy(ctx->mClipMatrixForDraw, clip->mMatrixForDraw.data(), 16 * sizeof(float));
+        }
+
+        // Render mask SOURCE drawables to FBO via mask render path
+        for (int idx : clip->mClippingMaskDrawIndexList)
+        {
+            auto* dd = static_cast<Mesh*>(mc->getDrawData(idx));
+            auto* ctx = mc->getDrawContext(idx);
+            this->setClipMatrix(clip->mMatrixForMask.data());
+            this->mClipChannel = clip->mLayoutChannelNo;
+            this->setClipBufPre_clipContextForMask((void*)1);
+            dd->draw(this, mc, ctx);
+            this->setClipBufPre_clipContextForMask(nullptr);
+        }
+    }
+    this->exitMaskRendering();
+}
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\AffineEnt.cpp --------
+#include "AffineEnt.hpp"
+#include "BinaryReader.hpp"
+#include "DEF.hpp"
+
+namespace live2d {
+
+void AffineEnt::read(BinaryReader& br) {
+    mOriginX = br.readFloat32();
+    mOriginY = br.readFloat32();
+    mScaleX = br.readFloat32();
+    mScaleY = br.readFloat32();
+    mRotationDeg = br.readFloat32();
+    if (br.getFormatVersion() >= LIVE2D_FORMAT_VERSION_V2_10_SDK2) {
+        mReflectX = br.readBoolean();
+        mReflectY = br.readBoolean();
+    }
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\ALive2DModel.cpp --------
+#include "ALive2DModel.hpp"
+#include "ModelContext.hpp"
+
+namespace live2d {
+
+ALive2DModel::ALive2DModel() {
+    mModelContext = new ModelContext(this);
+}
+
+ModelImpl* ALive2DModel::getModelImpl() {
+    if (!mModelImpl) {
+        mModelImpl = new ModelImpl();
+    }
+    return mModelImpl;
+}
+
+int ALive2DModel::getCanvasWidth() const {
+    return mModelImpl ? mModelImpl->getCanvasWidth() : 0;
+}
+
+int ALive2DModel::getCanvasHeight() const {
+    return mModelImpl ? mModelImpl->getCanvasHeight() : 0;
+}
+
+float ALive2DModel::getParamFloat(int index) const {
+    return mModelContext ? mModelContext->getParamFloat(index) : 0.0f;
+}
+
+void ALive2DModel::setParamFloat(int index, float value, float weight) {
+    if (mModelContext) {
+        mModelContext->setParamFloat(index,
+            mModelContext->getParamFloat(index) * (1.0f - weight) + value * weight);
+    }
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\Avatar.cpp --------
+#include "Avatar.hpp"
+#include "PartsData.hpp"
+#include "BinaryReader.hpp"
+
+namespace live2d {
+
+void Avatar::read(BinaryReader& br) {
+    mId = br.readObject<const Id*>();
+    mDrawDataList = br.readObject<std::vector<IDrawData*>>();
+    mDeformerList = br.readObject<std::vector<Deformer*>>();
+}
+
+void Avatar::replacePartsData(PartsData* parts) {
+    parts->setDeformer(mDeformerList);
+    parts->setDrawData(mDrawDataList);
+    mDeformerList.clear();
+    mDrawDataList.clear();
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\BinaryReader.cpp --------
+#include "BinaryReader.hpp"
+#include "ISerializable.hpp"
+#include "Id.hpp"
+#include "Live2DObjectFactory.hpp"
+#include "DEF.hpp"
+#include <cstring>
+
+namespace live2d {
+
+// -- Helper for big-endian conversion --
+namespace {
+
+inline float readBigFloat(const uint8_t* buf, size_t offset) {
+    uint32_t raw;
+    memcpy(&raw, buf + offset, 4);
+    // Big-endian to native
+    raw = ((raw & 0x000000FFU) << 24) | ((raw & 0x0000FF00U) << 8) |
+          ((raw & 0x00FF0000U) >> 8)  | ((raw & 0xFF000000U) >> 24);
+    float result;
+    memcpy(&result, &raw, 4);
+    return result;
+}
+
+inline int32_t readBigInt32(const uint8_t* buf, size_t offset) {
+    uint32_t raw;
+    memcpy(&raw, buf + offset, 4);
+    return static_cast<int32_t>(
+        ((raw & 0x000000FFU) << 24) | ((raw & 0x0000FF00U) << 8) |
+        ((raw & 0x00FF0000U) >> 8)  | ((raw & 0xFF000000U) >> 24));
+}
+
+inline int16_t readBigShort(const uint8_t* buf, size_t offset) {
+    uint16_t raw;
+    memcpy(&raw, buf + offset, 2);
+    return static_cast<int16_t>(
+        ((raw & 0x00FFU) << 8) | ((raw & 0xFF00U) >> 8));
+}
+
+inline double readBigDouble(const uint8_t* buf, size_t offset) {
+    uint64_t raw;
+    memcpy(&raw, buf + offset, 8);
+    raw = ((raw & 0x00000000000000FFULL) << 56) | ((raw & 0x000000000000FF00ULL) << 40) |
+          ((raw & 0x0000000000FF0000ULL) << 24) | ((raw & 0x00000000FF000000ULL) << 8)  |
+          ((raw & 0x000000FF00000000ULL) >> 8)  | ((raw & 0x0000FF0000000000ULL) >> 24) |
+          ((raw & 0x00FF000000000000ULL) >> 40) | ((raw & 0xFF00000000000000ULL) >> 56);
+    double result;
+    memcpy(&result, &raw, 8);
+    return result;
+}
+
+} // anonymous namespace
+
+// -- BinaryReader implementation --
+
+int BinaryReader::readNumber() {
+    int b1 = readByte();
+    if ((b1 & 128) == 0) return b1 & 255;
+
+    int b2 = readByte();
+    if ((b2 & 128) == 0) return ((b1 & 127) << 7) | (b2 & 127);
+
+    int b3 = readByte();
+    if ((b3 & 128) == 0) return ((b1 & 127) << 14) | ((b2 & 127) << 7) | (b3 & 255);
+
+    int b4 = readByte();
+    if ((b4 & 128) == 0)
+        return ((b1 & 127) << 21) | ((b2 & 127) << 14) | ((b3 & 127) << 7) | (b4 & 255);
+
+    throw std::runtime_error("number parse error");
+}
+
+double BinaryReader::readDouble() {
+    checkBits();
+    double result = readBigDouble(mBuf.data(), mOffset);
+    mOffset += 8;
+    return result;
+}
+
+float BinaryReader::readFloat32() {
+    checkBits();
+    float result = readBigFloat(mBuf.data(), mOffset);
+    mOffset += 4;
+    return result;
+}
+
+int32_t BinaryReader::readInt32() {
+    checkBits();
+    int32_t result = readBigInt32(mBuf.data(), mOffset);
+    mOffset += 4;
+    return result;
+}
+
+uint8_t BinaryReader::readByte() {
+    checkBits();
+    return mBuf[mOffset++];
+}
+
+int16_t BinaryReader::readUShort() {
+    checkBits();
+    int16_t result = readBigShort(mBuf.data(), mOffset);
+    mOffset += 2;
+    return result;
+}
+
+bool BinaryReader::readBoolean() {
+    checkBits();
+    return mBuf[mOffset++] != 0;
+}
+
+std::string BinaryReader::readUTF8String() {
+    checkBits();
+    int length = readType();
+    std::string result(reinterpret_cast<const char*>(&mBuf[mOffset]), length);
+    mOffset += length;
+    return result;
+}
+
+std::vector<int32_t> BinaryReader::readInt32Array() {
+    checkBits();
+    int count = readType();
+    std::vector<int32_t> result(count);
+    for (int i = 0; i < count; i++) {
+        result[i] = readInt32();
+    }
+    return result;
+}
+
+std::vector<float> BinaryReader::readFloat32Array() {
+    checkBits();
+    int count = readType();
+    std::vector<float> result(count);
+    for (int i = 0; i < count; i++) {
+        result[i] = readFloat32();
+    }
+    return result;
+}
+
+std::vector<double> BinaryReader::readFloat64Array() {
+    checkBits();
+    int count = readType();
+    std::vector<double> result(count);
+    for (int i = 0; i < count; i++) {
+        result[i] = readDouble();
+    }
+    return result;
+}
+
+bool BinaryReader::readBit() {
+    if (mOffset8Bit == 0) {
+        mCurrent8Bit = readByte();
+    } else if (mOffset8Bit == 8) {
+        mCurrent8Bit = readByte();
+        mOffset8Bit = 0;
+    }
+
+    bool result = ((mCurrent8Bit >> (7 - mOffset8Bit)) & 1) == 1;
+    mOffset8Bit++;
+    return result;
+}
+
+void BinaryReader::checkBits() {
+    if (mOffset8Bit != 0) {
+        mOffset8Bit = 0;
+    }
+}
+
+void* BinaryReader::readObjectRaw(int type) {
+    return readObjectUntyped(type);
+}
+
+void* BinaryReader::readObjectUntyped(int type) {
+    checkBits();
+    if (type < 0) type = readType();
+
+    if (type == 0) {
+        mObjects->push_back(nullptr);
+        mDeleters->push_back(nullptr);
+        return nullptr;
+    }
+
+    if (type == OBJECT_REF) {
+        int index = readInt32();
+        if (index < 0 || index >= static_cast<int>(mObjects->size())) {
+            throw std::runtime_error("Invalid object reference index: " + std::to_string(index)
+                + " (size=" + std::to_string(mObjects->size()) + ")");
+        }
+        return mObjects->at(index);
+    }
+
+    void* obj = readKnownTypeObject(type);
+    //mObjects->push_back(obj); void* obj = readKnownTypeObject(type);中返回
+    return obj;
+}
+
+void* BinaryReader::readKnownTypeObject(int type) {
+    if (type == 0) {
+        mObjects->push_back(nullptr);
+        mDeleters->push_back(nullptr);
+        return nullptr;
+    }
+    // String-to-Id types: 50, 51, 134, 60
+    if (type == 50 || type == 51 || type == 134 || type == 60) {
+        std::string idStr = readUTF8String();
+        Id* idPtr = const_cast<Id*>(&Id::getID(idStr));
+        mObjects->push_back(idPtr);
+        mDeleters->push_back(nullptr);
+        return idPtr;
+    }
+    // Factory-created ISerializable subclasses (type >= 48)
+    if (type >= 48) {
+        auto obj = Live2DObjectFactory::create(type);
+        ISerializable* rawPtr = obj.get();
+        rawPtr->type = type;
+        obj.release(); // Transfer ownership — will be tracked in mObjects
+        rawPtr->read(*this);
+        mObjects->push_back(rawPtr);
+        mDeleters->push_back(&live2d::ISerializable::ISerializableRelease);
+        return rawPtr;
+    }
+    // Primitive types
+    if (type == 1) {
+        // String — return heap-allocated string
+        std::string* s = new std::string(readUTF8String());
+        mObjects->push_back(s);
+        mDeleters->push_back([](void* ptr) { delete static_cast<std::string*>(ptr); });
+        return s;
+    }
+    if (type == 15) {
+        // Array of objects — read count then each element
+        int count = readType();
+        auto* arr = new std::vector<void*>();
+        arr->reserve(count);
+        for (int i = 0; i < count; i++) {
+            arr->push_back(readObjectUntyped());
+        }
+        mObjects->push_back(arr);
+        mDeleters->push_back([](void* ptr) { delete static_cast<std::vector<void*>*>(ptr); });
+        return arr;
+    }
+    if (type == 16 || type == 25) {
+        auto* arr = new std::vector<int32_t>(readInt32Array());
+        mObjects->push_back(arr);
+        mDeleters->push_back([](void* ptr) { delete static_cast<std::vector<int32_t>*>(ptr); });
+        return arr;
+    }
+    if (type == 26) {
+        auto* arr = new std::vector<double>(readFloat64Array());
+        mObjects->push_back(arr);
+        mDeleters->push_back([](void* ptr) { delete static_cast<std::vector<double>*>(ptr); });
+        return arr;
+    }
+    if (type == 27) {
+        auto* arr = new std::vector<float>(readFloat32Array());
+        mObjects->push_back(arr);
+        mDeleters->push_back([](void* ptr) { delete static_cast<std::vector<float>*>(ptr); });
+        return arr;
+    }
+    if (type == 23) {
+        throw std::runtime_error("type not implemented");
+    }
+
+    throw std::runtime_error("type error: " + std::to_string(type));
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\ClipContext.cpp --------
+#include "ClipContext.hpp"
+
+namespace live2d {
+
+ClipContext::ClipContext(ModelContext* mc, const std::vector<std::string>& clipIDs)
+    : mClipIDList(clipIDs) {
+    (void)mc;
+}
+
+void ClipContext::addClippedDrawData(const std::string& drawId, int drawIdx) {
+    (void)drawId;
+    mClippedDrawIndexList.push_back(drawIdx);
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\Deformer.cpp --------
+#include "Deformer.hpp"
+#include "DeformerContext.hpp"
+#include "BinaryReader.hpp"
+#include "DEF.hpp"
+#include "PivotManager.hpp"
+#include "ModelContext.hpp"
+#include "UtInterpolate.hpp"
+
+namespace live2d {
+
+void Deformer::read(BinaryReader& br) {
+    mId = br.readObject<const Id*>();
+    mTargetId = br.readObject<const Id*>();
+}
+
+void Deformer::readOpacity(BinaryReader& br) {
+    if (br.getFormatVersion() >= LIVE2D_FORMAT_VERSION_V2_10_SDK2) {
+        mPivotOpacities = br.readFloat32Array();
+    }
+}
+
+void Deformer::interpolateOpacity(ModelContext* mdc, PivotManager* pivotMgr,
+                                  DeformerContext* bctx, bool& ret) {
+    if (mPivotOpacities.empty()) {
+        bctx->setInterpolatedOpacity(1.0f);
+    } else {
+        bctx->setInterpolatedOpacity(
+            UtInterpolate::interpolateFloat(mdc, pivotMgr, ret, mPivotOpacities));
+    }
+}
+
+bool Deformer::needTransform() const {
+    return mTargetId != nullptr && *mTargetId != Id::DST_BASE_ID();
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\Id.cpp --------
+#include "Id.hpp"
+
+namespace live2d {
+
+std::unordered_map<std::string, std::unique_ptr<Id>> Id::sInstances;
+
+const Id& Id::DST_BASE_ID() {
+    return Id::getID("DST_BASE");
+}
+
+const Id& Id::getID(const std::string& idStr) {
+    auto it = sInstances.find(idStr);
+    if (it != sInstances.end()) {
+        return *it->second;
+    }
+    auto id = std::make_unique<Id>(idStr);
+    const Id& ref = *id;
+    sInstances[idStr] = std::move(id);
+    return ref;
+}
+
+void Id::releaseStored() {
+    sInstances.clear();
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\IDrawData.cpp --------
+#include "IDrawData.hpp"
+#include "MeshContext.hpp"
+#include "BinaryReader.hpp"
+#include "DEF.hpp"
+#include "PivotManager.hpp"
+#include "Deformer.hpp"
+#include "ModelContext.hpp"
+#include "UtInterpolate.hpp"
+#include <string>
+
+namespace live2d {
+
+int IDrawData::sTotalMinOrder = DEFAULT_ORDER;
+int IDrawData::sTotalMaxOrder = DEFAULT_ORDER;
+
+static void setDrawOrders(const std::vector<int>& orders) {
+    for (int i = static_cast<int>(orders.size()) - 1; i >= 0; i--) {
+        int order = orders[i];
+        if (order < IDrawData::sTotalMinOrder) IDrawData::sTotalMinOrder = order;
+        else if (order > IDrawData::sTotalMaxOrder) IDrawData::sTotalMaxOrder = order;
+    }
+}
+
+static std::vector<std::string>* convertClipIDForV2_11(const Id* clipId) {
+    if (!clipId || clipId->str().empty()) return nullptr;
+    auto* result = new std::vector<std::string>();
+    const std::string& s = clipId->str();
+    if (s.find(',') == std::string::npos) {
+        result->push_back(s);
+        return result;
+    }
+    size_t start = 0, end;
+    while ((end = s.find(',', start)) != std::string::npos) {
+        result->push_back(s.substr(start, end - start));
+        start = end + 1;
+    }
+    result->push_back(s.substr(start));
+    return result;
+}
+
+void IDrawData::read(BinaryReader& br) {
+    mId = br.readObject<const Id*>();
+    mTargetId = br.readObject<const Id*>();
+    mPivotMgr = br.readObject<PivotManager*>();
+    mAverageDrawOrder = br.readInt32();
+    mPivotDrawOrders = br.readInt32Array();
+    mPivotOpacities = br.readFloat32Array();
+
+    if (br.getFormatVersion() >= LIVE2D_FORMAT_VERSION_AVAILABLE) {
+        const Id* clipId = br.readObject<const Id*>();
+        mClipIDList = convertClipIDForV2_11(clipId);
+    } else {
+        mClipIDList = nullptr;
+    }
+    setDrawOrders(mPivotDrawOrders);
+}
+
+void IDrawData::setupInterpolate(ModelContext* mc, MeshContext* ctx) {
+    ctx->mParamOutside = false;
+    ctx->mInterpolatedDrawOrder = UtInterpolate::interpolateInt(
+        mc, mPivotMgr, ctx->mParamOutside, mPivotDrawOrders);
+    // Match Python: skip opacity interpolation if outside param
+    if (ctx->mParamOutside) return;
+    ctx->mInterpolatedOpacity = UtInterpolate::interpolateFloat(
+        mc, mPivotMgr, ctx->mParamOutside, mPivotOpacities);
+}
+
+float IDrawData::getOpacity(MeshContext* ctx) {
+    return ctx->mInterpolatedOpacity;
+}
+
+int IDrawData::getDrawOrder(MeshContext* ctx) {
+    return ctx->mInterpolatedDrawOrder;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\L2DBaseModel.cpp --------
+#include "L2DBaseModel.hpp"
+#include "Live2DModelRender.hpp"
+#include "AMotion.hpp"
+#include "Live2DMotion.hpp"
+#include "L2DEyeBlink.hpp"
+#include "L2DPose.hpp"
+#include "L2DPhysics.hpp"
+#include "L2DExpressionMotion.hpp"
+#include "L2DMotionManager.hpp"
+#include "ModelContext.hpp"
+#include "BinaryReader.hpp"
+#include "ModelImpl.hpp"
+#include "MeshContext.hpp"
+//#include "Log.hpp"
+namespace live2d {
+L2DBaseModel::L2DBaseModel() {
+    mLive2DModel = new Live2DModelRender();
+    mEyeBlink = new L2DEyeBlink();
+    mPhysics = new L2DPhysics();
+    mPose = new L2DPose();
+    mMainMotionMgr = new L2DMotionManager();
+    mExpressionMgr = new L2DMotionManager();
+    mObjects = std::make_shared<std::vector<void*>>();
+    mDeleters = std::make_shared<std::vector<std::function<void(void*)>>>();
+}
+L2DBaseModel::L2DBaseModel(std::shared_ptr<Render> render)
+{
+    mLive2DModel = new Live2DModelRender(render);
+    mEyeBlink = new L2DEyeBlink();
+    mPhysics = new L2DPhysics();
+    mPose = new L2DPose();
+    mMainMotionMgr = new L2DMotionManager();
+    mExpressionMgr = new L2DMotionManager();
+    mObjects = std::make_shared<std::vector<void*>>();
+    mDeleters = std::make_shared<std::vector<std::function<void(void*)>>>();
+}
+L2DBaseModel::~L2DBaseModel() {
+    delete mLive2DModel;
+    delete mEyeBlink; delete mPhysics; delete mPose;
+    delete mMainMotionMgr; delete mExpressionMgr;
+    for (auto& p : mMotions) for (auto* m : p.second) delete m;
+    for (auto& p : mExpressions) delete p.second;
+    if (mDeleters)
+    {
+        for (size_t i = 0; i < mDeleters->size(); ++i)
+        {
+            if ((*mDeleters)[i])
+            {
+                (*mDeleters)[i]((*mObjects)[i]);
+            }
+        }
+    }
+}
+void L2DBaseModel::loadModelData(const std::vector<uint8_t>& data, int version) {
+    BinaryReader br(data);
+    br.mObjects = mObjects;
+    br.mDeleters = mDeleters;
+    br.readByte(); br.readByte(); br.readByte();
+    version = br.readByte();
+    br.setFormatVersion(version);
+    auto* impl = static_cast<ModelImpl*>(br.readObjectRaw());
+    mLive2DModel->setModelImpl(impl);
+    mLive2DModel->getModelContext()->setDrawParam(mLive2DModel->getDrawParam());
+    mLive2DModel->getModelContext()->init();
+    // Initialize model matrix (match Python L2DBaseModel.loadModelData)
+    mModelMatrix = L2DModelMatrix(
+        (float)mLive2DModel->getCanvasWidth(),
+        (float)mLive2DModel->getCanvasHeight());
+    mModelMatrix.setWidth(2);
+    mModelMatrix.setCenterPosition(0, 0);
+}
+AMotion* L2DBaseModel::loadMotion(const std::string& name, const std::vector<uint8_t>& data) {
+    auto* m = Live2DMotion::load(data);
+    mMotions[name].push_back(m); return m;
+}
+AMotion* L2DBaseModel::loadExpression(const std::string& name, const std::vector<uint8_t>& data) {
+    auto* m = L2DExpressionMotion::load(data);
+    mExpressions[name] = m; return m;
+}
+L2DPose* L2DBaseModel::loadPose(const std::vector<uint8_t>& data) {
+    delete mPose; mPose = L2DPose::load(data); return mPose;
+}
+void L2DBaseModel::loadPhysics(const std::vector<uint8_t>& data) {
+    if (mPhysics)
+    {
+        delete mPhysics;
+    }
+    mPhysics = L2DPhysics::load(data);
+}
+bool L2DBaseModel::hitTestSimple(const std::string& drawID, float x, float y) {
+    auto* mc = mLive2DModel->getModelContext();
+    int drawIdx = mc->getDrawDataIndex(&Id::getID(drawID));
+    if (drawIdx < 0) return false;
+
+    auto* dctx = mc->getDrawContext(drawIdx);
+    if (!dctx || !dctx->mAvailable) return false;
+
+    auto& verts = !dctx->mTransformedPoints.empty()
+                      ? dctx->mTransformedPoints
+                      : dctx->mInterpolatedPoints;
+    if (verts.empty()) return false;
+
+    float left = (float)mLive2DModel->getCanvasWidth(), right = 0;
+    float top = (float)mLive2DModel->getCanvasHeight(), bottom = 0;
+    for (size_t j = 0; j < verts.size(); j += 2) {
+        float vx = verts[j], vy = verts[j + 1];
+        if (vx < left) left = vx;
+        if (vx > right) right = vx;
+        if (vy < top) top = vy;
+        if (vy > bottom) bottom = vy;
+    }
+
+    float tx = mModelMatrix.invertTransformX(x);
+    float ty = mModelMatrix.invertTransformY(y);
+    return left <= tx && tx <= right && top <= ty && ty <= bottom;
+}
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\L2DExpressionMotion.cpp --------
+#include "L2DExpressionMotion.hpp"
+#include "L2DExpressionParam.hpp"
+#include "ALive2DModel.hpp"
+#include "ModelContext.hpp"
+#include "Id.hpp"
+#include <string>
+#include <cmath>
+
+namespace live2d {
+
+L2DExpressionMotion::L2DExpressionMotion() = default;
+
+void L2DExpressionMotion::updateParam(ALive2DModel* model, float timeSec, float weight) {
+    (void)timeSec;
+    if (mParams.empty()) return;
+    if (weight <= 0) return;
+
+    auto* mc = model->getModelContext();
+    for (auto& p : mParams) {
+        int pi = mc->getParamIndex(&Id::getID(p.mId));
+        if (pi < 0) continue;
+
+        float cur = mc->getParamFloat(pi);
+        float newVal;
+        if (p.mBlendType == 0) {           // TYPE_SET
+            newVal = cur * (1.0f - weight) + p.mValue * weight;
+        } else if (p.mBlendType == 2) {    // TYPE_MULT
+            newVal = cur * (1.0f + (p.mValue - 1.0f) * weight);
+        } else {                            // TYPE_ADD (default)
+            newVal = cur + p.mValue * weight;
+        }
+        mc->setParamFloat(pi, newVal);
+        // Expression effects are ephemeral — applied on top of the post-motion
+        // snapshot each frame, NOT persisted to savedParamValues.
+        // This matches Python v2 where expressionManager.updateParam() runs
+        // AFTER saveParam(), so expression changes vanish on next loadParam().
+    }
+}
+
+L2DExpressionMotion* L2DExpressionMotion::load(const std::vector<uint8_t>& data) {
+    auto* exp = new L2DExpressionMotion();
+    std::string json((const char*)data.data(), data.size());
+
+    // Parse fade_in (match Python: default 1000ms if not specified or 0)
+    auto fiPos = json.find("\"fade_in\"");
+    float fadeInMs = 1000;
+    if (fiPos != std::string::npos) {
+        auto colon = json.find(':', fiPos);
+        if (colon != std::string::npos) {
+            float v = (float)std::atoi(json.c_str() + colon + 1);
+            if (v > 0) fadeInMs = v;
+        }
+    }
+    exp->mFadeInSec = fadeInMs / 1000.0f;
+
+    // Parse fade_out
+    auto foPos = json.find("\"fade_out\"");
+    float fadeOutMs = 1000;
+    if (foPos != std::string::npos) {
+        auto colon = json.find(':', foPos);
+        if (colon != std::string::npos) {
+            float v = (float)std::atoi(json.c_str() + colon + 1);
+            if (v > 0) fadeOutMs = v;
+        }
+    }
+    exp->mFadeOutSec = fadeOutMs / 1000.0f;
+
+    // Parse params array
+    auto paramsPos = json.find("\"params\"");
+    if (paramsPos != std::string::npos) {
+        auto arrStart = json.find('[', paramsPos);
+        if (arrStart != std::string::npos) {
+            int depth = 0;
+            size_t arrEnd = arrStart;
+            for (size_t k = arrStart; k < json.size(); k++) {
+                if (json[k] == '[') depth++;
+                else if (json[k] == ']') { depth--; if (depth == 0) { arrEnd = k; break; } }
+            }
+            std::string arr = json.substr(arrStart + 1, arrEnd - arrStart - 1);
+            size_t pos = 0;
+            while (pos < arr.size()) {
+                auto idPos = arr.find("\"id\"", pos);
+                if (idPos == std::string::npos) break;
+                auto q1 = arr.find('"', idPos + 5);
+                auto q2 = arr.find('"', q1 + 1);
+                if (q1 == std::string::npos || q2 == std::string::npos) break;
+
+                // Find the closing } of this parameter object to bound searches
+                size_t objEnd = arr.find('}', q2);
+                if (objEnd == std::string::npos) break;
+
+                L2DExpressionParam p;
+                p.mId = arr.substr(q1 + 1, q2 - q1 - 1);
+
+                auto valPos = arr.find("\"val\"", q2);
+                if (valPos != std::string::npos && valPos < objEnd) {
+                    auto colon = arr.find(':', valPos);
+                    if (colon != std::string::npos && colon < objEnd)
+                        p.mValue = (float)std::atof(arr.c_str() + colon + 1);
+                }
+
+                // Parse "def" (default value for ADD/MULT blending, Python default: 0 for ADD, 1 for MULT)
+                auto defPos = arr.find("\"def\"", q2);
+                if (defPos != std::string::npos && defPos < objEnd) {
+                    auto colon = arr.find(':', defPos);
+                    if (colon != std::string::npos && colon < objEnd)
+                        p.mDefValue = (float)std::atof(arr.c_str() + colon + 1);
+                }
+
+                // Parse "calc" (Python default: "add" → TYPE_ADD=1)
+                auto calcPos = arr.find("\"calc\"", q2);
+                if (calcPos != std::string::npos && calcPos < objEnd) {
+                    auto cq1 = arr.find('"', calcPos + 7);
+                    auto cq2 = arr.find('"', cq1 + 1);
+                    if (cq1 != std::string::npos && cq2 != std::string::npos && cq1 < objEnd) {
+                        std::string calc = arr.substr(cq1 + 1, cq2 - cq1 - 1);
+                        if (calc == "set") p.mBlendType = 0;
+                        else if (calc == "mult") p.mBlendType = 2;
+                        else p.mBlendType = 1; // "add" (default)
+                    }
+                }
+
+                // Apply def adjustment (match Python: for ADD, value = value - default)
+                if (p.mBlendType == 1) // ADD
+                    p.mValue = p.mValue - p.mDefValue;
+                else if (p.mBlendType == 2) // MULT
+                    p.mValue = p.mValue / (p.mDefValue != 0 ? p.mDefValue : 1.0f);
+
+                exp->mParams.push_back(p);
+                pos = objEnd + 1;
+            }
+        }
+    }
+    return exp;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\L2DEyeBlink.cpp --------
+#include "L2DEyeBlink.hpp"
+#include "ALive2DModel.hpp"
+#include "ModelContext.hpp"
+#include "Id.hpp"
+#include "UtSystem.hpp"
+#include <cstdlib>
+namespace live2d {
+L2DEyeBlink::L2DEyeBlink() {}
+void L2DEyeBlink::setEyeMotion(int closeMs, int closedMs, int openMs) {
+    mClosingMs = static_cast<float>(closeMs);
+    mClosedMs = static_cast<float>(closedMs);
+    mOpeningMs = static_cast<float>(openMs);
+}
+void L2DEyeBlink::updateParam(ALive2DModel* model) {
+    float now = static_cast<float>(UtSystem::getUserTimeMSec());
+    mCurrentTime = now;
+
+    switch (mState) {
+    case FIRST:
+        mNextBlinkTime = now + static_cast<float>(rand() % (2 * (int)mBlinkIntervalMs));
+        mState = INTERVAL;
+        break;
+    case INTERVAL:
+        if (now >= mNextBlinkTime) {
+            mState = CLOSING;
+            mStateStartTime = now;
+        }
+        break;
+    case CLOSING: {
+        float elapsed = now - mStateStartTime;
+        float v = 1.0f - (elapsed / mClosingMs);
+        if (v <= 0) { v = 0; mState = CLOSED; mStateStartTime = now; }
+        model->setParamFloat(model->getModelContext()->getParamIndex(&Id::getID(mEyeLId)), v);
+        model->setParamFloat(model->getModelContext()->getParamIndex(&Id::getID(mEyeRId)), v);
+        break;
+    }
+    case CLOSED: {
+        model->setParamFloat(model->getModelContext()->getParamIndex(&Id::getID(mEyeLId)), 0);
+        model->setParamFloat(model->getModelContext()->getParamIndex(&Id::getID(mEyeRId)), 0);
+        float elapsed = now - mStateStartTime;
+        if (elapsed >= mClosedMs) { mState = OPENING; mStateStartTime = now; }
+        break;
+    }
+    case OPENING: {
+        float elapsed = now - mStateStartTime;
+        float v = elapsed / mOpeningMs;
+        if (v >= 1.0f) { v = 1.0f; mState = INTERVAL;
+            mNextBlinkTime = now + mBlinkIntervalMs + static_cast<float>(rand() % (int)mBlinkIntervalMs); }
+        model->setParamFloat(model->getModelContext()->getParamIndex(&Id::getID(mEyeLId)), v);
+        model->setParamFloat(model->getModelContext()->getParamIndex(&Id::getID(mEyeRId)), v);
+        break;
+    }
+    }
+}
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\L2DMatrix44.cpp --------
+#include "L2DMatrix44.hpp"
+#include <cstring>
+
+namespace live2d {
+
+L2DMatrix44::L2DMatrix44() { identity(); }
+
+void L2DMatrix44::identity() {
+    mMatrix.fill(0.0f);
+    mMatrix[0] = mMatrix[5] = mMatrix[10] = mMatrix[15] = 1.0f;
+}
+
+void L2DMatrix44::setMatrix(const float m[16]) {
+    std::memcpy(mMatrix.data(), m, 16 * sizeof(float));
+}
+
+void L2DMatrix44::multTranslate(float x, float y, float z) {
+    mMatrix[12] += x; mMatrix[13] += y; mMatrix[14] += z;
+}
+
+void L2DMatrix44::multScale(float sx, float sy, float sz) {
+    mMatrix[0] *= sx; mMatrix[5] *= sy; mMatrix[10] *= sz;
+}
+
+L2DMatrix44 L2DMatrix44::mul(const L2DMatrix44& a, const L2DMatrix44& b) {
+    L2DMatrix44 r;
+    auto& rm = r.getArray();
+    auto& am = const_cast<L2DMatrix44&>(a).getArray();
+    auto& bm = const_cast<L2DMatrix44&>(b).getArray();
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            rm[i + j * 4] = am[i] * bm[j * 4] + am[i + 4] * bm[j * 4 + 1]
+                          + am[i + 8] * bm[j * 4 + 2] + am[i + 12] * bm[j * 4 + 3];
+    return r;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\L2DModelMatrix.cpp --------
+#include "L2DModelMatrix.hpp"
+#include <cstring>
+
+namespace live2d {
+
+L2DModelMatrix::L2DModelMatrix(float w, float h) : mWidth(w), mHeight(h) {
+    identity();
+}
+
+void L2DModelMatrix::identity() {
+    mMat.fill(0);
+    mMat[0] = mMat[5] = mMat[10] = mMat[15] = 1.0f;
+}
+
+void L2DModelMatrix::setWidth(float w) {
+    float sx = w / mWidth;
+    float sy = -sx;
+    scale(sx, sy);
+}
+
+void L2DModelMatrix::setHeight(float h) {
+    float sx = h / mHeight;
+    float sy = -sx;
+    scale(sx, sy);
+}
+
+void L2DModelMatrix::setCenterPosition(float x, float y) {
+    float w = mWidth * getScaleX();
+    float h = mHeight * getScaleY();
+    translate(x - w * 0.5f, y - h * 0.5f);
+}
+
+void L2DModelMatrix::translate(float x, float y) {
+    // Match Python: absolute assignment, not relative accumulation
+    mMat[12] = x;
+    mMat[13] = y;
+    mMat[14] = 0;
+    mMat[15] = 1;
+}
+
+void L2DModelMatrix::scale(float sx, float sy) {
+    // Match Python: assignment, NOT multiplication
+    mMat[0] = sx;  mMat[1] = 0;  mMat[2] = 0;  mMat[3] = 0;
+    mMat[4] = 0;   mMat[5] = sy; mMat[6] = 0;  mMat[7] = 0;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\L2DMotionManager.cpp --------
+#include "L2DMotionManager.hpp"
+#include "ALive2DModel.hpp"
+#include "UtSystem.hpp"
+#include <cmath>
+namespace live2d {
+L2DMotionManager::L2DMotionManager() = default;
+bool L2DMotionManager::reserveMotion(int priority) {
+    if (priority < mReservePriority) return false;
+    if (priority < mCurrentPriority) return false;
+    mReservePriority = priority;
+    return true;
+}
+int L2DMotionManager::startMotion(AMotion* motion, bool autoPriority) {
+    float now = (float)UtSystem::getUserTimeMSec();
+    // Fade out existing motions, matching Python v2: shorter end time wins
+    for (auto& e : mMotions) {
+        if (e.mFadeOut > 0) {
+            float newEnd = now + e.mFadeOut * 1000.0f;
+            if (e.mEndTimeMs < 0 || newEnd < e.mEndTimeMs)
+                e.mEndTimeMs = newEnd;
+        }
+    }
+    mMotions.push_back({motion, motion->mFadeInSec, motion->mFadeOutSec, false,
+                        now, now, -1.0f});
+    return (int)mMotions.size() - 1;
+}
+int L2DMotionManager::startMotionPrio(AMotion* motion, int priority) {
+    if (priority == mReservePriority) mReservePriority = 0;
+    mCurrentPriority = priority;
+    return startMotion(motion, false);
+}
+// Easing: 0.5 - 0.5*cos(x*pi), clamped [0,1]
+static float easeSine(float x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    return 0.5f - 0.5f * cosf(x * 3.14159265f);
+}
+
+bool L2DMotionManager::updateParam(ALive2DModel* model) {
+    float now = (float)UtSystem::getUserTimeMSec();
+    bool updated = false;
+    for (size_t i = 0; i < mMotions.size(); ) {
+        auto& e = mMotions[i];
+        if (!e.mStarted) {
+            e.mStartTimeMs = now;
+            e.mFadeInStartMs = now;
+            // Don't reset mEndTimeMs if startFadeOut already set it
+            if (e.mEndTimeMs < 0)
+                e.mEndTimeMs = -1;
+            e.mStarted = true;
+        }
+        float elapsed = (now - e.mStartTimeMs) / 1000.0f;
+
+        // Fade-in weight
+        float fadeIn = 1.0f;
+        if (e.mFadeIn > 0 && e.mFadeInStartMs >= 0) {
+            fadeIn = easeSine((now - e.mFadeInStartMs) / (e.mFadeIn * 1000.0f));
+        }
+        // Fade-out weight
+        float fadeOut = 1.0f;
+        if (e.mFadeOut > 0 && e.mEndTimeMs >= 0) {
+            float remaining = (e.mEndTimeMs - now) / (e.mFadeOut * 1000.0f);
+            if (remaining <= 0) {
+                e.mFinished = true;
+                fadeOut = 0;
+            } else {
+                fadeOut = easeSine(remaining);
+            }
+        }
+
+        float weight = e.mMotion->mWeight * fadeIn * fadeOut;
+        if (weight < 0) weight = 0;
+        if (weight > 1) weight = 1;
+
+        e.mMotion->updateParam(model, elapsed, weight);
+        updated = true;
+        if (e.mFinished || e.mMotion->isFinished()) {
+            mMotions.erase(mMotions.begin() + i);
+        } else { i++; }
+    }
+    if (mMotions.empty()) mCurrentPriority = 0;
+    return updated;
+}
+bool L2DMotionManager::isFinished() const { return mMotions.empty(); }
+void L2DMotionManager::stopAllMotions() { mMotions.clear(); }
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\L2DPhysics.cpp --------
+#include "L2DPhysics.hpp"
+#include "PhysicsHair.hpp"
+#include "ALive2DModel.hpp"
+#include "UtSystem.hpp"
+#include <string>
+#include <cmath>
+
+namespace live2d {
+
+L2DPhysics::L2DPhysics() {
+    mStartTimeMs = (long long)UtSystem::getUserTimeMSec();
+}
+
+void L2DPhysics::updateParam(ALive2DModel* model) {
+    long long t = (long long)UtSystem::getUserTimeMSec() - mStartTimeMs;
+    for (auto* ph : mPhysicsList) ph->update(model, t);
+}
+
+L2DPhysics* L2DPhysics::load(const std::vector<uint8_t>& data) {
+    auto* ret = new L2DPhysics();
+    std::string json((const char*)data.data(), data.size());
+
+    auto hairPos = json.find("\"physics_hair\"");
+    if (hairPos == std::string::npos) return ret;
+    auto arrStart = json.find('[', hairPos);
+    if (arrStart == std::string::npos) return ret;
+
+    // Find matching ']'
+    int depth = 0;
+    size_t arrEnd = arrStart;
+    for (size_t i = arrStart; i < json.size(); i++) {
+        if (json[i] == '[') depth++;
+        else if (json[i] == ']') { depth--; if (depth == 0) { arrEnd = i; break; } }
+    }
+    std::string arr = json.substr(arrStart + 1, arrEnd - arrStart - 1);
+
+    size_t pos = 0;
+    while (pos < arr.size()) {
+        auto objStart = arr.find('{', pos);
+        if (objStart == std::string::npos) break;
+        int oDepth = 0;
+        size_t objEnd = objStart;
+        for (size_t i = objStart; i < arr.size(); i++) {
+            if (arr[i] == '{') oDepth++;
+            else if (arr[i] == '}') { oDepth--; if (oDepth == 0) { objEnd = i; break; } }
+        }
+        std::string obj = arr.substr(objStart, objEnd - objStart + 1);
+
+        auto* ph = new PhysicsHair();
+
+        // Parse setup
+        auto setupPos = obj.find("\"setup\"");
+        if (setupPos != std::string::npos) {
+            auto sOpen = obj.find('{', setupPos);
+            int sDepth = 0;
+            size_t sClose = sOpen;
+            for (size_t i = sOpen; i < obj.size(); i++) {
+                if (obj[i] == '{') sDepth++;
+                else if (obj[i] == '}') { sDepth--; if (sDepth == 0) { sClose = i; break; } }
+            }
+            std::string setup = obj.substr(sOpen + 1, sClose - sOpen - 1);
+            float length = 0.3f, resist = 0.5f, mass = 0.1f;
+            auto readF = [&](const char* key, float def) -> float {
+                auto kp = setup.find(key); if (kp == std::string::npos) return def;
+                auto col = setup.find(':', kp); if (col == std::string::npos) return def;
+                return (float)std::atof(setup.c_str() + col + 1);
+            };
+            length = readF("\"length\"", 0.3f);
+            resist = readF("\"regist\"", 0.5f);
+            mass   = readF("\"mass\"", 0.1f);
+            ph->setup(length, resist, mass);
+        }
+
+        // Parse src
+        auto srcPos = obj.find("\"src\"");
+        if (srcPos != std::string::npos) {
+            auto sa = obj.find('[', srcPos);
+            if (sa != std::string::npos) {
+                int sd = 0; size_t se = sa;
+                for (size_t i = sa; i < obj.size(); i++) {
+                    if (obj[i] == '[') sd++;
+                    else if (obj[i] == ']') { sd--; if (sd == 0) { se = i; break; } }
+                }
+                std::string srcArr = obj.substr(sa + 1, se - sa - 1);
+                size_t sp = 0;
+                while (sp < srcArr.size()) {
+                    auto so = srcArr.find('{', sp); if (so == std::string::npos) break;
+                    int d2 = 0; size_t sc = so;
+                    for (size_t i = so; i < srcArr.size(); i++) {
+                        if (srcArr[i] == '{') d2++;
+                        else if (srcArr[i] == '}') { d2--; if (d2 == 0) { sc = i; break; } }
+                    }
+                    std::string srcObj = srcArr.substr(so, sc - so + 1);
+                    auto readS = [&](const char* key) -> std::string {
+                        auto kp = srcObj.find(key); if (kp == std::string::npos) return "";
+                        auto q1 = srcObj.find('"', kp + 5);
+                        auto q2 = srcObj.find('"', q1 + 1);
+                        if (q1 == std::string::npos || q2 == std::string::npos) return "";
+                        return srcObj.substr(q1 + 1, q2 - q1 - 1);
+                    };
+                    auto readF2 = [&](const char* key, float def) -> float {
+                        auto kp = srcObj.find(key); if (kp == std::string::npos) return def;
+                        auto col = srcObj.find(':', kp); if (col == std::string::npos) return def;
+                        return (float)std::atof(srcObj.c_str() + col + 1);
+                    };
+                    std::string tid = readS("\"id\"");
+                    std::string ptype = readS("\"ptype\"");
+                    float scale = readF2("\"scale\"", 1.0f);
+                    float weight = readF2("\"weight\"", 1.0f);
+                    PhysicsSrcType st;
+                    if (ptype == "x") st = SRC_TO_X;
+                    else if (ptype == "y") st = SRC_TO_Y;
+                    else if (ptype == "angle") st = SRC_TO_G_ANGLE;
+                    else { sp = sc + 1; continue; }
+                    ph->addSrcParam(st, tid, scale, weight);
+                    sp = sc + 1;
+                }
+            }
+        }
+
+        // Parse targets
+        auto tgtPos = obj.find("\"targets\"");
+        if (tgtPos != std::string::npos) {
+            auto ta = obj.find('[', tgtPos);
+            if (ta != std::string::npos) {
+                int td = 0; size_t te = ta;
+                for (size_t i = ta; i < obj.size(); i++) {
+                    if (obj[i] == '[') td++;
+                    else if (obj[i] == ']') { td--; if (td == 0) { te = i; break; } }
+                }
+                std::string tgtArr = obj.substr(ta + 1, te - ta - 1);
+                size_t tp = 0;
+                while (tp < tgtArr.size()) {
+                    auto to = tgtArr.find('{', tp); if (to == std::string::npos) break;
+                    int d3 = 0; size_t tc = to;
+                    for (size_t i = to; i < tgtArr.size(); i++) {
+                        if (tgtArr[i] == '{') d3++;
+                        else if (tgtArr[i] == '}') { d3--; if (d3 == 0) { tc = i; break; } }
+                    }
+                    std::string tgtObj = tgtArr.substr(to, tc - to + 1);
+                    auto readS = [&](const char* key) -> std::string {
+                        auto kp = tgtObj.find(key); if (kp == std::string::npos) return "";
+                        auto q1 = tgtObj.find('"', kp + 5);
+                        auto q2 = tgtObj.find('"', q1 + 1);
+                        if (q1 == std::string::npos || q2 == std::string::npos) return "";
+                        return tgtObj.substr(q1 + 1, q2 - q1 - 1);
+                    };
+                    auto readF2 = [&](const char* key, float def) -> float {
+                        auto kp = tgtObj.find(key); if (kp == std::string::npos) return def;
+                        auto col = tgtObj.find(':', kp); if (col == std::string::npos) return def;
+                        return (float)std::atof(tgtObj.c_str() + col + 1);
+                    };
+                    std::string tid = readS("\"id\"");
+                    std::string ttype = readS("\"ptype\"");
+                    float scale = readF2("\"scale\"", 1.0f);
+                    float weight = readF2("\"weight\"", 1.0f);
+                    PhysicsTargetType tt;
+                    if (ttype == "angle") tt = TARGET_FROM_ANGLE;
+                    else if (ttype == "angle_v") tt = TARGET_FROM_ANGLE_V;
+                    else { tp = tc + 1; continue; }
+                    ph->addTargetParam(tt, tid, scale, weight);
+                    tp = tc + 1;
+                }
+            }
+        }
+
+        ret->mPhysicsList.push_back(ph);
+        pos = objEnd + 1;
+    }
+    return ret;
+}
+L2DPhysics::~L2DPhysics()
+{
+    for (auto* ph : mPhysicsList)
+    {
+        delete ph;
+    }
+}
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\L2DPose.cpp --------
+#include "L2DPose.hpp"
+#include "L2DPartsParam.hpp"
+#include "ALive2DModel.hpp"
+#include "ModelContext.hpp"
+#include "Id.hpp"
+#include "UtSystem.hpp"
+#include <algorithm>
+#include <string>
+#include <cstring>
+
+namespace live2d {
+
+L2DPose::L2DPose() = default;
+
+void PartData::initIndex(ALive2DModel* model) {
+    auto* mc = model->getModelContext();
+    std::string paramId = "VISIBLE:" + id;
+    paramIndex = mc->getParamIndex(&Id::getID(paramId));
+    partsIndex = mc->getPartsDataIndex(&Id::getID(id));
+    for (auto& l : link) l.initIndex(model);
+}
+
+static void normalizeGroup(ALive2DModel* model, PosePartGroup& group, float deltaSec) {
+    int visibleIdx = -1;
+    float visibleOpacity = 1.0f;
+    float clearSec = 0.5f;
+    float phi = 0.5f;
+    float maxBack = 0.15f;
+
+    for (int i = 0; i < (int)group.parts.size(); i++) {
+        int pi = group.parts[i].paramIndex;
+        if (pi < 0) continue;
+        if (model->getParamFloat(pi) != 0) {
+            if (visibleIdx >= 0) break;
+            visibleIdx = i;
+            int pIdx = group.parts[i].partsIndex;
+            if (pIdx >= 0) {
+                visibleOpacity = model->getModelContext()->getPartsOpacity(pIdx);
+                visibleOpacity += deltaSec / clearSec;
+                if (visibleOpacity > 1.0f) visibleOpacity = 1.0f;
+            }
+        }
+    }
+
+    if (visibleIdx < 0) { visibleIdx = 0; visibleOpacity = 1.0f; }
+
+    for (int i = 0; i < (int)group.parts.size(); i++) {
+        int pIdx = group.parts[i].partsIndex;
+        if (pIdx < 0) continue;
+        if (i == visibleIdx) {
+            model->getModelContext()->setPartsOpacity(pIdx, visibleOpacity);
+        } else {
+            float cur = model->getModelContext()->getPartsOpacity(pIdx);
+            float a1;
+            if (visibleOpacity < phi)
+                a1 = visibleOpacity * (phi - 1.0f) / phi + 1.0f;
+            else
+                a1 = (1.0f - visibleOpacity) * phi / (1.0f - phi);
+
+            float backOp = (1.0f - a1) * (1.0f - visibleOpacity);
+            if (backOp > maxBack) a1 = 1.0f - maxBack / (1.0f - visibleOpacity);
+            cur = std::min(cur, a1);
+            model->getModelContext()->setPartsOpacity(pIdx, cur);
+        }
+    }
+}
+
+static void copyOpacityOtherParts(ALive2DModel* model, PosePartGroup& group) {
+    for (auto& p : group.parts) {
+        if (p.partsIndex < 0) continue;
+        float op = model->getModelContext()->getPartsOpacity(p.partsIndex);
+        for (auto& lp : p.link) {
+            if (lp.partsIndex < 0) continue;
+            model->getModelContext()->setPartsOpacity(lp.partsIndex, op);
+        }
+    }
+}
+
+void L2DPose::updateParam(ALive2DModel* model) {
+    if (model != mLastModel) {
+        for (auto& g : mMGroups) {
+            for (auto& p : g.parts) {
+                p.initIndex(model);
+                if (p.partsIndex < 0) continue;
+                bool v = (model->getParamFloat(p.paramIndex) != 0);
+                model->getModelContext()->setPartsOpacity(p.partsIndex, v ? 1.0f : 0.0f);
+                model->setParamFloat(p.paramIndex, v ? 1.0f : 0.0f);
+            }
+        }
+    }
+
+    mLastModel = model;
+    float now = (float)UtSystem::getUserTimeMSec();
+    float dt = (mLastTime > 0) ? (now - mLastTime) / 1000.0f : 0;
+    if (dt < 0) dt = 0;
+    mLastTime = now;
+
+    for (auto& g : mMGroups) {
+        normalizeGroup(model, g, dt);
+        copyOpacityOtherParts(model, g);
+    }
+}
+
+L2DPose* L2DPose::load(const std::vector<uint8_t>& data) {
+    auto* pose = new L2DPose();
+    std::string json((const char*)data.data(), data.size());
+
+    auto pvPos = json.find("\"parts_visible\"");
+    if (pvPos == std::string::npos) return pose;
+
+    auto arrStart = json.find('[', pvPos);
+    if (arrStart == std::string::npos) return pose;
+    int depth = 0;
+    size_t arrEnd = arrStart;
+    for (size_t i = arrStart; i < json.size(); i++) {
+        if (json[i] == '[') depth++;
+        else if (json[i] == ']') { depth--; if (depth == 0) { arrEnd = i; break; } }
+    }
+    if (arrEnd == arrStart) return pose;
+
+    std::string arr = json.substr(arrStart + 1, arrEnd - arrStart - 1);
+    size_t pos = 0;
+    while (pos < arr.size()) {
+        auto grpStart = arr.find("\"group\"", pos);
+        if (grpStart == std::string::npos) break;
+        auto gaStart = arr.find('[', grpStart);
+        if (gaStart == std::string::npos) break;
+        int gDepth = 0;
+        size_t gaEnd = gaStart;
+        for (size_t k = gaStart; k < arr.size(); k++) {
+            if (arr[k] == '[') gDepth++;
+            else if (arr[k] == ']') { gDepth--; if (gDepth == 0) { gaEnd = k; break; } }
+        }
+        if (gaEnd == gaStart) break;
+
+        std::string groupStr = arr.substr(gaStart + 1, gaEnd - gaStart - 1);
+        PosePartGroup group;
+
+        size_t gPos = 0;
+        while (gPos < groupStr.size()) {
+            // Parse {"id":"PARTS_XX", "link":["...","..."]}
+            auto objStart = groupStr.find('{', gPos);
+            if (objStart == std::string::npos) break;
+            // Find matching }
+            int oDepth = 0;
+            size_t objEnd = objStart;
+            for (size_t k = objStart; k < groupStr.size(); k++) {
+                if (groupStr[k] == '{') oDepth++;
+                else if (groupStr[k] == '}') { oDepth--; if (oDepth == 0) { objEnd = k; break; } }
+            }
+            if (objEnd == objStart) break;
+
+            std::string objStr = groupStr.substr(objStart, objEnd - objStart + 1);
+
+            // Parse "id"
+            auto idStart = objStr.find("\"id\"");
+            if (idStart != std::string::npos) {
+                auto q1 = objStr.find('"', idStart + 5);
+                auto q2 = objStr.find('"', q1 + 1);
+                if (q1 != std::string::npos && q2 != std::string::npos) {
+                    PartData pd;
+                    pd.id = objStr.substr(q1 + 1, q2 - q1 - 1);
+
+                    // Parse "link" array if present
+                    auto linkStart = objStr.find("\"link\"");
+                    if (linkStart != std::string::npos) {
+                        auto laStart = objStr.find('[', linkStart);
+                        if (laStart != std::string::npos) {
+                            int lDepth = 0;
+                            size_t laEnd = laStart;
+                            for (size_t l = laStart; l < objStr.size(); l++) {
+                                if (objStr[l] == '[') lDepth++;
+                                else if (objStr[l] == ']') { lDepth--; if (lDepth == 0) { laEnd = l; break; } }
+                            }
+                            if (laEnd > laStart) {
+                                std::string linkStr = objStr.substr(laStart + 1, laEnd - laStart - 1);
+                                size_t lp = 0;
+                                while (lp < linkStr.size()) {
+                                    auto lq1 = linkStr.find('"', lp);
+                                    if (lq1 == std::string::npos) break;
+                                    auto lq2 = linkStr.find('"', lq1 + 1);
+                                    if (lq2 == std::string::npos) break;
+                                    PartData linkPd;
+                                    linkPd.id = linkStr.substr(lq1 + 1, lq2 - lq1 - 1);
+                                    pd.link.push_back(linkPd);
+                                    lp = lq2 + 1;
+                                }
+                            }
+                        }
+                    }
+
+                    group.parts.push_back(pd);
+                }
+            }
+            gPos = objEnd + 1;
+        }
+
+        pose->mMGroups.push_back(group);
+        pos = gaEnd + 1;
+    }
+    return pose;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\L2DTargetPoint.cpp --------
+#include "L2DTargetPoint.hpp"
+#include <cmath>
+
+namespace live2d {
+
+void L2DTargetPoint::update(float deltaSec) {
+    float dx = mTargetX - mX;
+    float dy = mTargetY - mY;
+    if (std::abs(dx) < sEpsilon && std::abs(dy) < sEpsilon) return;
+    // Smooth lerp: move ~10% per frame for responsive drag
+    float t = deltaSec * 10.0f; if (t > 1.0f) t = 1.0f;
+    mX += dx * t;
+    mY += dy * t;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\LAppModel.cpp --------
+#include "LAppModel.hpp"
+#include "ModelContext.hpp"
+#include "L2DEyeBlink.hpp"
+#include "L2DPhysics.hpp"
+#include "L2DPose.hpp"
+#include "L2DPartsParam.hpp"
+#include "L2DMotionManager.hpp"
+#include "L2DExpressionMotion.hpp"
+#include "Live2DMotion.hpp"
+#include "Live2DModelRender.hpp"
+#include "ModelImpl.hpp"
+#include "PartsData.hpp"
+#include "PartsDataContext.hpp"
+#include "MeshContext.hpp"
+#include "Mesh.hpp"
+//#include "DrawParamOpenGL.hpp"
+#include "Id.hpp"
+#include "UtSystem.hpp"
+#include <stb_image.h>
+//#include "Log.hpp"
+#include <fstream>
+#include <vector>
+#include <sstream>
+#include <cmath>
+#include <GL/glew.h>
+#include <filesystem>
+
+namespace live2d {
+
+// Helper: read entire file using std::filesystem::u8path for Unicode path support
+static std::vector<uint8_t> readFile(const std::string& path) {
+    std::filesystem::path fp = std::filesystem::u8path(path);
+    std::ifstream f(fp, std::ios::binary | std::ios::ate);
+    if (!f) return {};
+    auto sz = f.tellg(); f.seekg(0);
+    std::vector<uint8_t> data((size_t)sz);
+    f.read((char*)data.data(), sz);
+    return data;
+}
+
+// Simple JSON texture path extractor
+static std::vector<std::string> parseTexturePaths(const std::string& json) {
+    std::vector<std::string> paths;
+    auto pos = json.find("\"textures\"");
+    if (pos == std::string::npos) return paths;
+    pos = json.find('[', pos);
+    if (pos == std::string::npos) return paths;
+    auto end = json.find(']', pos);
+    if (end == std::string::npos) return paths;
+    std::string arr = json.substr(pos + 1, end - pos - 1);
+    size_t start = 0;
+    while (start < arr.size()) {
+        auto q1 = arr.find('"', start);
+        if (q1 == std::string::npos) break;
+        auto q2 = arr.find('"', q1 + 1);
+        if (q2 == std::string::npos) break;
+        paths.push_back(arr.substr(q1 + 1, q2 - q1 - 1));
+        start = q2 + 1;
+    }
+    return paths;
+}
+
+LAppModel::LAppModel() = default;
+LAppModel::LAppModel(std::shared_ptr<Render> render):L2DBaseModel(render)
+{
+
+}
+LAppModel::~LAppModel() = default;
+
+bool LAppModel::loadModelJson(const std::string& path) {
+    // Read JSON (use filesystem for Unicode path support)
+    auto jdata = readFile(path);
+    if (jdata.empty()) return false;
+    std::string json((char*)jdata.data(), jdata.size());
+
+    // Get base directory and load .moc from JSON model field
+    std::string baseDir = path.substr(0, path.find_last_of("/\\") + 1);
+    std::string mocPath;
+    auto modelPos = json.find("\"model\"");
+    if (modelPos != std::string::npos) {
+        auto q1 = json.find('"', modelPos + 7);
+        auto q2 = q1 != std::string::npos ? json.find('"', q1 + 1) : std::string::npos;
+        if (q2 != std::string::npos)
+            mocPath = baseDir + json.substr(q1 + 1, q2 - q1 - 1);
+    }
+    if (mocPath.empty()) {
+        mocPath = path;
+        size_t pos = mocPath.find(".model.json");
+        if (pos != std::string::npos) mocPath = mocPath.substr(0, pos) + ".moc";
+    }
+    auto mocData = readFile(mocPath);
+    if (mocData.empty()) return false;
+    loadModelData(mocData, 0);
+    mModelMatrix.mWidth = (float)mLive2DModel->getCanvasWidth();
+    mModelMatrix.mHeight = (float)mLive2DModel->getCanvasHeight();
+    //Info("Load model: %s", mocPath.c_str());
+
+    // Load textures
+    auto texPaths = parseTexturePaths(json);
+    for (size_t i = 0; i < texPaths.size(); i++) {
+        std::string texPath = baseDir + texPaths[i];
+        int w, h, n;
+        auto texData = readFile(texPath);
+        std::shared_ptr<Render> dp = mLive2DModel->getDrawParam();
+        if (dp)
+            dp->setTexture(i, texData);
+    }
+
+    // Apply init parts visibility from JSON
+    auto pvPos = json.find("\"init_parts_visible\"");
+    if (pvPos != std::string::npos) {
+        auto arrStart = json.find('[', pvPos);
+        auto arrEnd = json.find(']', arrStart);
+        if (arrStart != std::string::npos && arrEnd != std::string::npos) {
+            std::string arr = json.substr(arrStart + 1, arrEnd - arrStart - 1);
+            size_t p = 0;
+            while (p < arr.size()) {
+                auto idStart = arr.find("\"id\"", p);
+                if (idStart == std::string::npos) break;
+                auto v1 = arr.find('"', idStart + 5);
+                if (v1 == std::string::npos) break;
+                auto v2 = arr.find('"', v1 + 1);
+                if (v2 == std::string::npos) break;
+                std::string partId = arr.substr(v1 + 1, v2 - v1 - 1);
+                auto valStart = arr.find("\"value\"", v2);
+                if (valStart == std::string::npos) break;
+                auto v3 = arr.find(':', valStart);
+                if (v3 == std::string::npos) break;
+                float val = (float)std::atof(arr.c_str() + v3 + 1);
+                int idx = mLive2DModel->getModelContext()->getPartsDataIndex(&Id::getID(partId));
+                if (idx >= 0) setPartOpacity(idx, val);
+                p = valStart + 10;
+            }
+        }
+    }
+
+    // Apply init params from JSON
+    auto ipPos = json.find("\"init_params\"");
+    if (ipPos != std::string::npos) {
+        auto arrStart = json.find('[', ipPos);
+        auto arrEnd = json.find(']', arrStart);
+        if (arrStart != std::string::npos && arrEnd != std::string::npos) {
+            std::string arr = json.substr(arrStart + 1, arrEnd - arrStart - 1);
+            size_t p = 0;
+            while (p < arr.size()) {
+                auto idStart = arr.find("\"id\"", p);
+                if (idStart == std::string::npos) break;
+                auto v1 = arr.find('"', idStart + 5);
+                if (v1 == std::string::npos) break;
+                auto v2 = arr.find('"', v1 + 1);
+                if (v2 == std::string::npos) break;
+                std::string paramId = arr.substr(v1 + 1, v2 - v1 - 1);
+                auto valStart = arr.find("\"value\"", v2);
+                if (valStart == std::string::npos) break;
+                auto v3 = arr.find(':', valStart);
+                if (v3 == std::string::npos) break;
+                float val = (float)std::atof(arr.c_str() + v3 + 1);
+                int idx = mLive2DModel->getModelContext()->getParamIndex(&Id::getID(paramId));
+                if (idx >= 0) mLive2DModel->setParamFloat(idx, val);
+                p = valStart + 10;
+            }
+        }
+    }
+
+    // Load pose file
+    auto poseKeyPos = json.find("\"pose\"");
+    if (poseKeyPos != std::string::npos) {
+        auto q1 = json.find('"', poseKeyPos + 6);
+        auto q2 = q1 != std::string::npos ? json.find('"', q1 + 1) : std::string::npos;
+        if (q2 != std::string::npos) {
+            std::string poseFile = json.substr(q1 + 1, q2 - q1 - 1);
+            std::string posePath = baseDir + poseFile;
+            auto poseData = readFile(posePath);
+            if (!poseData.empty()) {
+                //Info("Load pose: %s", poseFile.c_str());
+                delete mPose;
+                mPose = L2DPose::load(poseData);
+                // Initialize part indices from model
+                for (auto& g : mPose->mMGroups) {
+                    for (auto& p : g.parts) {
+                        if (!p.id.empty()) {
+                            p.partsIndex = mLive2DModel->getModelContext()
+                                ->getPartsDataIndex(&Id::getID(p.id));
+                            p.paramIndex = mLive2DModel->getModelContext()
+                                ->getParamIndex(&Id::getID(p.id));
+                        }
+                    }
+                }
+                mPose->updateParam(mLive2DModel);
+            }
+        }
+    }
+
+    // Load motion files
+    auto motPos = json.find("\"motions\"");
+    if (motPos != std::string::npos) {
+        size_t searchPos = json.find('{', motPos);
+        if (searchPos != std::string::npos) searchPos++; // enter motions object
+        while (searchPos < json.size()) {
+            auto gs = json.find('"', searchPos);
+            if (gs == std::string::npos) break;
+            auto ge = json.find('"', gs + 1);
+            if (ge == std::string::npos) break;
+            std::string groupName = json.substr(gs + 1, ge - gs - 1);
+            // Skip non-group-name strings (e.g. "motions", "file", file names)
+            if (groupName == "motions" || groupName == "expressions" ||
+                groupName.find('/') != std::string::npos || groupName.find('.') != std::string::npos) {
+                searchPos = ge + 1; continue;
+            }
+            // Find the array start for this group
+            auto arrStart = json.find('[', ge);
+            if (arrStart == std::string::npos) { searchPos = ge + 1; continue; }
+            // Find matching ] to get the group's array
+            int depth = 0;
+            size_t arrEnd = arrStart;
+            for (size_t k = arrStart; k < json.size(); k++) {
+                if (json[k] == '[') depth++;
+                else if (json[k] == ']') { depth--; if (depth == 0) { arrEnd = k; break; } }
+            }
+            // Find ALL "file" entries within this group's array
+            size_t fileSearch = ge;
+            auto& motVec = mMotions[groupName];
+            while (true) {
+                auto filePos = json.find("\"file\"", fileSearch);
+                if (filePos == std::string::npos || filePos >= arrEnd) break;
+                auto fv1 = json.find('"', filePos + 7);
+                auto fv2 = json.find('"', fv1 + 1);
+                if (fv1 == std::string::npos || fv2 == std::string::npos || fv2 >= arrEnd) break;
+                std::string motFile = json.substr(fv1 + 1, fv2 - fv1 - 1);
+                std::string motPath = baseDir + motFile;
+                auto motData = readFile(motPath);
+                if (!motData.empty()) {
+                    auto* motion = Live2DMotion::load(motData);
+                    //Info("Load motion: %s", motFile.c_str());
+                    motVec.push_back(motion);
+                }
+                fileSearch = fv2 + 1;
+            }
+            if (motVec.empty()) mMotions.erase(groupName);
+            searchPos = arrEnd + 1;
+        }
+    }
+
+    // Load expression files
+    auto expPos = json.find("\"expressions\"");
+    if (expPos != std::string::npos) {
+        auto arrStart = json.find('[', expPos);
+        if (arrStart != std::string::npos) {
+            int depth = 0;
+            size_t arrEnd = arrStart;
+            for (size_t k = arrStart; k < json.size(); k++) {
+                if (json[k] == '[') depth++;
+                else if (json[k] == ']') { depth--; if (depth == 0) { arrEnd = k; break; } }
+            }
+            std::string arr = json.substr(arrStart + 1, arrEnd - arrStart - 1);
+            size_t pos = 0;
+            while (pos < arr.size()) {
+                auto namePos = arr.find("\"name\"", pos);
+                auto filePos = arr.find("\"file\"", pos);
+                if (namePos == std::string::npos || filePos == std::string::npos) break;
+
+                // Extract name
+                auto nq1 = arr.find('"', namePos + 7);
+                auto nq2 = arr.find('"', nq1 + 1);
+                // Extract file
+                auto fq1 = arr.find('"', filePos + 7);
+                auto fq2 = arr.find('"', fq1 + 1);
+
+                if (nq1 == std::string::npos || nq2 == std::string::npos ||
+                    fq1 == std::string::npos || fq2 == std::string::npos) break;
+
+                std::string expName = arr.substr(nq1 + 1, nq2 - nq1 - 1);
+                std::string expFile = arr.substr(fq1 + 1, fq2 - fq1 - 1);
+                std::string expPath = baseDir + expFile;
+                auto expData = readFile(expPath);
+                if (!expData.empty()) {
+                    auto* expr = L2DExpressionMotion::load(expData);
+                    //Info("Load expression: %s", expName.c_str());
+                    mExpressions[expName] = expr;
+                }
+                pos = std::max(nq2, fq2) + 1;
+            }
+        }
+    }
+
+    return true;
+}
+void LAppModel::resize(int w, int h) {
+    mMatrixManager.onResize(w, h);
+    mLive2DModel->resize(w, h);
+}
+void LAppModel::drag(float x, float y) {
+    // Convert screen coords to scene coords (match Python MatrixManager.screenToScene)
+    float w = (float)mMatrixManager.getWidth();
+    float h = (float)mMatrixManager.getHeight();
+    float sx = (x - w * 0.5f) * 2.0f / h;
+    float sy = (y - h * 0.5f) * -2.0f / h;
+    mDragMgr.set(sx, sy);
+}
+bool LAppModel::isMotionFinished() const { return mMainMotionMgr->isFinished(); }
+void LAppModel::setOffset(float dx, float dy) { mMatrixManager.setOffset(dx, dy); }
+void LAppModel::setScale(float s) { mMatrixManager.setScale(s); }
+void LAppModel::setParameterValue(const std::string& id, float val, float w) {
+    int idx = mLive2DModel->getModelContext()->getParamIndex(&Id::getID(id));
+    mLive2DModel->setParamFloat(idx, val, w);
+    // Match Python: also update savedParamValues so loadParam() doesn't revert
+    auto* mc = mLive2DModel->getModelContext();
+    if (idx >= 0 && idx < (int)mc->mSavedParamValues.size())
+        mc->mSavedParamValues[idx] = mc->mSavedParamValues[idx] * (1.0f - w) + val * w;
+}
+void LAppModel::addParameterValue(const std::string& id, float val, float w) {
+    int idx = mLive2DModel->getModelContext()->getParamIndex(&Id::getID(id));
+    auto* mc = mLive2DModel->getModelContext();
+    mc->setParamFloat(idx, mc->getParamFloat(idx) + val * w);
+}
+int LAppModel::getParameterCount() const {
+    return (int)mLive2DModel->getModelContext()->mParamValues.size();
+}
+int LAppModel::getPartCount() const {
+    return (int)mLive2DModel->getModelContext()->mPartsDataList.size();
+}
+std::string LAppModel::getPartId(int index) const {
+    auto& parts = mLive2DModel->getModelContext()->mPartsDataList;
+    if (index >= 0 && index < (int)parts.size() && parts[index]->getId())
+        return parts[index]->getId()->str();
+    return "";
+}
+void LAppModel::setPartOpacity(int index, float val) {
+    mLive2DModel->getModelContext()->setPartsOpacity(index, val);
+}
+void LAppModel::update() {
+    mDragMgr.update(0.016f);
+    setDrag(mDragMgr.getX(), mDragMgr.getY());
+
+    // Match v2 Python update() flow
+    bool updated = false;
+    if (mClearFlag) {
+        mMainMotionMgr->stopAllMotions();
+        if (mPose) {
+            for (auto& g : mPose->mMGroups)
+                for (auto& p : g.parts) p.initIndex(mLive2DModel);
+        }
+        mClearFlag = false;
+    } else {
+        mLive2DModel->getModelContext()->loadParam();
+        updated = mMainMotionMgr->updateParam(mLive2DModel);
+    }
+    mLive2DModel->getModelContext()->saveParam();
+
+    // Check motion finish callback
+    if (mCallbacksPending && mMainMotionMgr->isFinished()) {
+        if (mOnFinishMotion) mOnFinishMotion(mCurrentGroup, mCurrentNo);
+        mOnFinishMotion = nullptr;
+        mOnStartMotion = nullptr;
+        mCallbacksPending = false;
+    }
+
+    // Python suppresses eye-blink while a main motion is active
+    if (!updated && mAutoBlink && mEyeBlink)
+        mEyeBlink->updateParam(mLive2DModel);
+
+    // Python skips expression update when no expressions exist
+    if (!mExpressions.empty())
+        mExpressionMgr->updateParam(mLive2DModel);
+
+    // Drag-based parameter updates (match v2 Python)
+    auto* mc = mLive2DModel->getModelContext();
+    auto addParam = [&](const char* id, float value, float weight) {
+        int idx = mc->getParamIndex(&Id::getID(id));
+        if (idx >= 0) {
+            float cur = mc->getParamFloat(idx);
+            mc->setParamFloat(idx, cur + value * weight);
+        }
+    };
+    addParam("PARAM_ANGLE_X", mDragX * 30, 1);
+    addParam("PARAM_ANGLE_Y", mDragY * 30, 1);
+    addParam("PARAM_ANGLE_Z", mDragX * mDragY * -30, 1);
+    addParam("PARAM_BODY_ANGLE_X", mDragX * 10, 1);
+    addParam("PARAM_EYE_BALL_X", mDragX, 1);
+    addParam("PARAM_EYE_BALL_Y", mDragY, 1);
+
+    // Auto-breath animation (wall clock time, match v2 Python periods)
+    if (mAutoBreath) {
+        float t = (float)UtSystem::getUserTimeMSec() / 1000.0f;
+        addParam("PARAM_ANGLE_X", 15.0f * sinf(t / 6.5345f), 0.5f);
+        addParam("PARAM_ANGLE_Y", 8.0f * sinf(t / 3.5345f), 0.5f);
+        addParam("PARAM_ANGLE_Z", 10.0f * sinf(t / 5.5345f), 0.5f);
+        addParam("PARAM_BODY_ANGLE_X", 4.0f * sinf(t / 15.5345f), 0.5f);
+        int breathIdx = mc->getParamIndex(&Id::getID("PARAM_BREATH"));
+        if (breathIdx >= 0)
+            mc->setParamFloat(breathIdx, 0.5f + 0.5f * sinf(t / 3.2345f));
+    }
+
+    if (mPhysics) mPhysics->updateParam(mLive2DModel);
+    if (mPose) mPose->updateParam(mLive2DModel);
+
+}
+void LAppModel::draw() {
+    // Match v2 Python: process deformer chain in draw(), not update()
+    // This allows SetParameterValue between Update() and Draw() to take effect
+    mLive2DModel->getModelContext()->update();
+
+    std::shared_ptr<Render> dp = mLive2DModel->getDrawParam();
+    auto mvp = mMatrixManager.getMvp(&mModelMatrix);
+    dp->setMatrix(mvp.data());
+    mLive2DModel->getModelContext()->preDraw(dp);
+    mLive2DModel->draw();
+}
+bool LAppModel::hitTest(const std::string& area, float x, float y) {
+    // Convert screen pixels → scene coords (match Python screenToScene)
+    float w = (float)mMatrixManager.getWidth();
+    float h = (float)mMatrixManager.getHeight();
+    float sx = (x - w * 0.5f) * 2.0f / h;
+    float sy = (y - h * 0.5f) * -2.0f / h;
+    return hitTestSimple(area, sx, sy);
+}
+void LAppModel::setExpression(const std::string& name) {
+    auto it = mExpressions.find(name);
+    if (it != mExpressions.end()) {
+        //Info("Start expression: %s", name.c_str());
+        mExpressionMgr->startMotion(it->second, false);
+    }
+}
+void LAppModel::setRandomExpression() {
+    if (!mExpressions.empty()) {
+        auto it = mExpressions.begin();
+        std::advance(it, rand() % mExpressions.size());
+        //Info("Start random expression: %s", it->first.c_str());
+        mExpressionMgr->startMotion(it->second, false);
+    }
+}
+void LAppModel::startMotion(const std::string& group, int no, int priority,
+                             StartCallback onStart, FinishCallback onFinish) {
+    mOnStartMotion = std::move(onStart);
+    mOnFinishMotion = std::move(onFinish);
+    auto it = mMotions.find(group);
+    if (it != mMotions.end() && !it->second.empty()) {
+        if (no < 0 || no >= (int)it->second.size()) no = 0;
+        mCallbacksPending = true;
+        mCurrentGroup = group;
+        mCurrentNo = no;
+        if (mOnStartMotion) mOnStartMotion(group, no);
+        //Info("Start motion: group=%s no=%d priority=%d", group.c_str(), no, priority);
+        mMainMotionMgr->startMotionPrio(it->second[no], priority);
+    } else {
+        if (mOnStartMotion) mOnStartMotion(group, no);
+        if (mOnFinishMotion) mOnFinishMotion(group, no);
+        mOnStartMotion = nullptr;
+        mOnFinishMotion = nullptr;
+    }
+}
+void LAppModel::startRandomMotion(const std::string& group, int priority,
+                                   StartCallback onStart, FinishCallback onFinish) {
+    if (group.empty()) {
+        if (mMotions.empty()) return;
+        int idx = rand() % (int)mMotions.size();
+        auto it = mMotions.begin();
+        std::advance(it, idx);
+        int count = (int)it->second.size();
+        int no = (count > 1) ? (rand() % count) : 0;
+        startMotion(it->first, no, priority, std::move(onStart), std::move(onFinish));
+    } else {
+        auto it = mMotions.find(group);
+        int count = (it != mMotions.end()) ? (int)it->second.size() : 1;
+        int no = (count > 1) ? (rand() % count) : 0;
+        startMotion(group, no, priority, std::move(onStart), std::move(onFinish));
+    }
+}
+void LAppModel::clearMotions() { mClearFlag = true; }
+void LAppModel::resetExpression() { mExpressionMgr->stopAllMotions(); }
+void LAppModel::resetPose() { if (mPose) { for (auto& g : mPose->mMGroups) for (auto& p : g.parts) p.initIndex(mLive2DModel); } }
+void LAppModel::rotate(float deg) { mMatrixManager.rotate(deg); }
+float LAppModel::getParameterValue(int index) const {
+    return mLive2DModel->getModelContext()->getParamFloat(index);
+}
+float LAppModel::getParameterMin(int index) const {
+    return mLive2DModel->getModelContext()->getParamMin(index);
+}
+float LAppModel::getParameterMax(int index) const {
+    return mLive2DModel->getModelContext()->getParamMax(index);
+}
+float LAppModel::getParameterDefault(int index) const {
+    return mLive2DModel->getModelContext()->getParamDefault(index);
+}
+std::string LAppModel::getParameterId(int index) const {
+    auto& ids = mLive2DModel->getModelContext()->mParamIdList;
+    if (index >= 0 && index < (int)ids.size() && ids[index])
+        return ids[index]->str();
+    return "";
+}
+void LAppModel::setPartScreenColor(int index, float r, float g, float b, float a) {
+    mLive2DModel->getModelContext()->setPartScreenColor(index, r, g, b, a);
+}
+void LAppModel::setPartMultiplyColor(int index, float r, float g, float b, float a) {
+    mLive2DModel->getModelContext()->setPartMultiplyColor(index, r, g, b, a);
+}
+std::vector<float> LAppModel::getPartScreenColor(int index) const {
+    auto* ctx = mLive2DModel->getModelContext()->getPartsContext(index);
+    return {ctx->mScreenColor[0], ctx->mScreenColor[1], ctx->mScreenColor[2], ctx->mScreenColor[3]};
+}
+std::vector<float> LAppModel::getPartMultiplyColor(int index) const {
+    auto* ctx = mLive2DModel->getModelContext()->getPartsContext(index);
+    return {ctx->mMultiplyColor[0], ctx->mMultiplyColor[1], ctx->mMultiplyColor[2], ctx->mMultiplyColor[3]};
+}
+static bool isInTriangle(float px, float py,
+                          float ax, float ay, float bx, float by, float cx, float cy) {
+    float v0x = cx - ax, v0y = cy - ay;
+    float v1x = bx - ax, v1y = by - ay;
+    float v2x = px - ax, v2y = py - ay;
+    float dot00 = v0x * v0x + v0y * v0y;
+    float dot01 = v0x * v1x + v0y * v1y;
+    float dot02 = v0x * v2x + v0y * v2y;
+    float dot11 = v1x * v1x + v1y * v1y;
+    float dot12 = v1x * v2x + v1y * v2y;
+    float inv = dot00 * dot11 - dot01 * dot01;
+    if (inv == 0.0f) return false;
+    float u = (dot11 * dot02 - dot01 * dot12) / inv;
+    float v = (dot00 * dot12 - dot01 * dot02) / inv;
+    return (u >= 0) && (v >= 0) && (u + v <= 1);
+}
+
+std::vector<std::string> LAppModel::hitPart(float x, float y, bool topOnly) {
+    // Step 1: screen pixels → scene coords (match Python MatrixManager.screenToScene)
+    float w = (float)mMatrixManager.getWidth();
+    float h = (float)mMatrixManager.getHeight();
+    float sx = (x - w * 0.5f) * 2.0f / h;
+    float sy = (y - h * 0.5f) * -2.0f / h;
+
+    // Step 2: scene → canvas via MVP inverse (match Python MatrixManager.invertTransform)
+    auto mvp = mMatrixManager.getMvp(&mModelMatrix);
+    float mx = (sx - mvp[12]) / mvp[0];
+    float my = (sy - mvp[13]) / mvp[5];
+
+    auto* mc = mLive2DModel->getModelContext();
+    auto& drawCtxs = mc->mDrawContextList;
+    auto& nextList = mc->mNextListDrawIndex;
+    auto& firstList = mc->mOrderListFirstDrawIndex;
+    int range = (int)firstList.size();
+
+    std::vector<std::string> result;
+
+    // Iterate draw orders in reverse
+    for (int order = range - 1; order >= 0; order--) {
+        if ((int)firstList.size() <= order) continue;
+        int idx = firstList[order];
+        if (idx < 0 || idx >= (int)drawCtxs.size()) continue;
+        while (true) {
+            auto* dctx = drawCtxs[idx];
+            if (!dctx || !dctx->mAvailable) {
+                if (nextList.size() > (size_t)idx) idx = nextList[idx];
+                else break;
+                if (idx < 0 || idx == 65535) break;
+                continue;
+            }
+
+            // Check part visibility
+            auto* pctx = mc->getPartsContext(dctx->mPartsIndex);
+            if (pctx && pctx->mPartsData && !pctx->mPartsData->isVisible()) {
+                if (nextList.size() > (size_t)idx) idx = nextList[idx];
+                else break;
+                if (idx < 0 || idx == 65535) break;
+                continue;
+            }
+            if (pctx && pctx->getPartsOpacity() < 0.1f) {
+                if (nextList.size() > (size_t)idx) idx = nextList[idx];
+                else break;
+                if (idx < 0 || idx == 65535) break;
+                continue;
+            }
+
+            // Get part ID
+            std::string partId;
+            if (pctx && pctx->mPartsData && pctx->mPartsData->getId())
+                partId = pctx->mPartsData->getId()->str();
+
+            // Skip duplicate parts
+            bool dup = false;
+            for (auto& r : result) if (r == partId) { dup = true; break; }
+            if (dup) {
+                if (nextList.size() > (size_t)idx) idx = nextList[idx];
+                else break;
+                if (idx < 0 || idx == 65535) break;
+                continue;
+            }
+
+            // Triangle hit test against drawable vertices
+            auto& verts = !dctx->mTransformedPoints.empty()
+                              ? dctx->mTransformedPoints
+                              : dctx->mInterpolatedPoints;
+            auto* dd = static_cast<Mesh*>(mc->getDrawData(idx));
+            if (dd && !verts.empty()) {
+                auto& indices = dd->getIndexArray();
+                for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+                    int i0 = indices[i] * 2, i1 = indices[i + 1] * 2, i2 = indices[i + 2] * 2;
+                    if (i0 < 0 || i1 < 0 || i2 < 0) continue;
+                    if ((size_t)i0 + 1 >= verts.size() || (size_t)i1 + 1 >= verts.size() || (size_t)i2 + 1 >= verts.size()) continue;
+                    if (isInTriangle(mx, my,
+                                     verts[i0], verts[i0 + 1],
+                                     verts[i1], verts[i1 + 1],
+                                     verts[i2], verts[i2 + 1])) {
+                        result.push_back(partId);
+                        if (topOnly) return result;
+                        break;
+                    }
+                }
+            }
+
+            if (nextList.size() > (size_t)idx) idx = nextList[idx];
+            else break;
+            if (idx < 0 || idx == 65535) break;
+        }
+    }
+    return result;
+}
+//void LAppModel::setTexture(int no, int texId) {
+//    auto* dp = mLive2DModel->getDrawParam();
+//    if (dp) dp->setTexture(no, static_cast<GLuint>(texId));
+//}
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\Live2DModelRender.cpp --------
+#include "Live2DModelRender.hpp"
+#include "ModelContext.hpp"
+//#include "DrawParamOpenGL.hpp"
+namespace live2d {
+
+#ifdef RenderUse
+    Live2DModelRender::Live2DModelRender()
+    {
+        mDrawParam = new OpenGlRender();
+    }
+    Live2DModelRender::~Live2DModelRender()
+    {
+        delete mDrawParam;
+    }
+    void Live2DModelRender::draw()
+    {
+        mModelContext->draw(mDrawParam);
+    }
+#elif RenderReplace
+    Live2DModelRender::Live2DModelRender()
+    {
+        mDrawParam = std::make_shared<OpenGlRender>();
+    }
+    Live2DModelRender::~Live2DModelRender()
+    {
+        //delete mDrawParam;
+    }
+    void Live2DModelRender::draw()
+    {
+        mModelContext->draw(mDrawParam);
+    }
+#else
+    Live2DModelRender::Live2DModelRender()
+    {
+        mDrawParam = new DrawParamRender();
+    }
+    Live2DModelRender::~Live2DModelRender()
+    {
+        delete mDrawParam;
+    }
+    void Live2DModelRender::draw()
+    {
+        mModelContext->draw(mDrawParam);
+    }
+#endif // Render
+Live2DModelRender::Live2DModelRender(std::shared_ptr<Render> render)
+{
+    if (render)
+    {
+        mDrawParam = render;
+    }
+    else
+    {
+        mDrawParam = std::make_shared < OpenGlRender>();
+    }
+        
+}
+
+void Live2DModelRender::resize(int w, int h) { (void)w; (void)h; }
+Live2DModelRender* Live2DModelRender::loadModel(const std::vector<uint8_t>& data) {
+    (void)data; return new Live2DModelRender();
+}
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\Live2DMotion.cpp --------
+#include "Live2DMotion.hpp"
+#include "ALive2DModel.hpp"
+#include "ModelContext.hpp"
+#include "Id.hpp"
+#include <algorithm>
+#include <cstring>
+#include <sstream>
+#include <cmath>
+
+namespace live2d {
+
+Live2DMotion::Live2DMotion() = default;
+
+void Live2DMotion::updateParam(ALive2DModel* model, float timeSec, float weight) {
+    if (mDurationMs <= 0 || mMotions.empty()) return;
+    float timeMs = timeSec * 1000.0f;
+
+    if (mLoop) {
+        float loopDur = mLoopDurationMs > 0 ? mLoopDurationMs : mDurationMs;
+        timeMs = std::fmod(timeMs, loopDur);
+    } else if (timeMs > mDurationMs) {
+        mFinished = true;
+        timeMs = mDurationMs;
+    }
+
+    float frame = timeMs * mFps / 1000.0f;
+    int idx0 = (int)frame;
+    int idx1 = idx0 + 1;
+    float t = frame - (float)idx0;
+
+    for (auto& m : mMotions) {
+        int sz = (int)m.mValues.size();
+        if (sz == 0) continue;
+        float v0, v1, val;
+        if (idx0 >= sz) {
+            // Past end of curve: use last value (should be 0 for hand params)
+            v0 = m.mValues[sz - 1];
+            v1 = v0;
+            val = v0;
+        } else {
+            v0 = m.mValues[idx0];
+            v1 = (idx1 < sz) ? m.mValues[idx1] : v0;
+            val = v0 + (v1 - v0) * t;
+        }
+
+        if (m.mParamId == "VISIBLE") {
+            // Match Python: set the "VISIBLE:xxx" parameter so the pose system
+            // (L2DPose::updateParam) can read it and apply smooth fade transitions.
+            std::string paramId = "VISIBLE:" + m.mSecondaryId;
+            int pi = model->getModelContext()->getParamIndex(&Id::getID(paramId));
+            if (pi >= 0)
+                model->getModelContext()->setParamFloat(pi, val);
+        } else {
+            int pi = model->getModelContext()->getParamIndex(&Id::getID(m.mParamId));
+            if (pi >= 0) {
+                model->setParamFloat(pi, val, weight);
+            }
+        }
+    }
+}
+
+float Live2DMotion::getDurationSec() const { return mDurationMs / 1000.0f; }
+bool Live2DMotion::isLoop() const { return mLoop; }
+
+Live2DMotion* Live2DMotion::load(const std::vector<uint8_t>& data) {
+    auto* m = new Live2DMotion();
+    std::string content((const char*)data.data(), data.size());
+    std::istringstream ss(content);
+    std::string line;
+
+while (std::getline(ss, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.pop_back();
+
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        // Strip leading '$' from key (MTN format: $fps=30)
+        if (!key.empty() && key[0] == '$') key = key.substr(1);
+
+        if (key == "fps") {
+            m->mFps = (float)std::strtof(val.c_str(), nullptr);
+        }
+        else if (key == "FADEIN") { m->mFadeInSec = (float)std::atoi(val.c_str()) / 1000.0f; }
+        else if (key == "FADEOUT") { m->mFadeOutSec = (float)std::atoi(val.c_str()) / 1000.0f; }
+        else if (key == "LOOP") { m->mLoop = (val == "1" || val == "true"); }
+        else if (key == "LOOPFADEIN") { m->mLoopFadeIn = (val == "1" || val == "true"); }
+        else {
+            Motion motion;
+            if (key.find("VISIBLE:") == 0) {
+                motion.mParamId = "VISIBLE";
+                motion.mSecondaryId = key.substr(8);
+            } else if (key.find("LAYOUT:") == 0) {
+                motion.mParamId = "LAYOUT";
+                motion.mSecondaryId = key.substr(7);
+            } else {
+                motion.mParamId = key;
+            }
+            std::istringstream vs(val);
+            std::string token;
+            while (std::getline(vs, token, ','))
+                if (!token.empty()) motion.mValues.push_back((float)std::atof(token.c_str()));
+            if (!motion.mValues.empty()) m->mMotions.push_back(motion);
+        }
+    }
+
+    int maxLen = 0;
+    for (auto& mot : m->mMotions)
+        maxLen = std::max(maxLen, (int)mot.mValues.size());
+    m->mDurationMs = (maxLen > 1) ? (float)(maxLen - 1) * 1000.0f / m->mFps : 0;
+    m->mLoopDurationMs = m->mDurationMs;
+    return m;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\Live2DObjectFactory.cpp --------
+#include "Live2DObjectFactory.hpp"
+#include "ISerializable.hpp"
+#include "ModelImpl.hpp"
+#include "Avatar.hpp"
+#include "PartsData.hpp"
+#include "ParamDefFloat.hpp"
+#include "ParamDefSet.hpp"
+#include "ParamPivots.hpp"
+#include "PivotManager.hpp"
+#include "Deformer.hpp"
+#include "RotationDeformer.hpp"
+#include "WarpDeformer.hpp"
+#include "AffineEnt.hpp"
+#include "Mesh.hpp"
+#include <stdexcept>
+#include <string>
+
+namespace live2d {
+
+std::unique_ptr<ISerializable> Live2DObjectFactory::create(int clsNo) {
+    if (clsNo < 100) {
+        switch (clsNo) {
+            case 65: return std::make_unique<WarpDeformer>();
+            case 66: return std::make_unique<PivotManager>();
+            case 67: return std::make_unique<ParamPivots>();
+            case 68: return std::make_unique<RotationDeformer>();
+            case 69: return std::make_unique<AffineEnt>();
+            case 70: return std::make_unique<Mesh>();
+            default: break;
+        }
+    } else if (clsNo < 150) {
+        switch (clsNo) {
+            case 131: return std::make_unique<ParamDefFloat>();
+            case 133: return std::make_unique<PartsData>();
+            case 136: return std::make_unique<ModelImpl>();
+            case 137: return std::make_unique<ParamDefSet>();
+            case 142: return std::make_unique<Avatar>();
+            default: break;
+        }
+    }
+
+    throw std::runtime_error("Unknown class ID: " + std::to_string(clsNo));
+}
+
+void live2d::ISerializable::ISerializableRelease(void* ptr)
+{
+    if (!ptr) return;  // 释放空指针安全
+
+    int clsNo = static_cast<ISerializable*>(ptr)->type;
+
+    if (clsNo < 100)
+    {
+        switch (clsNo)
+        {
+        case 65: delete static_cast<WarpDeformer*>(ptr); return;
+        case 66: delete static_cast<PivotManager*>(ptr); return;
+        case 67: delete static_cast<ParamPivots*>(ptr); return;
+        case 68: delete static_cast<RotationDeformer*>(ptr); return;
+        case 69: delete static_cast<AffineEnt*>(ptr); return;
+        case 70: delete static_cast<Mesh*>(ptr); return;
+        default: break;
+        }
+    }
+    else if (clsNo < 150)
+    {
+        switch (clsNo)
+        {
+        case 131: delete static_cast<ParamDefFloat*>(ptr); return;
+        case 133: delete static_cast<PartsData*>(ptr); return;
+        case 136: delete static_cast<ModelImpl*>(ptr); return;
+        case 137: delete static_cast<ParamDefSet*>(ptr); return;
+        case 142: delete static_cast<Avatar*>(ptr); return;
+        default: break;
+        }
+    }
+
+    // 未知类型：无法安全删除，抛出异常或记录错误
+    throw std::runtime_error("ISerializableRelease: unknown class ID " + std::to_string(clsNo));
+}
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\MatrixManager.cpp --------
+#include "MatrixManager.hpp"
+#include "L2DModelMatrix.hpp"
+#include <cmath>
+#include <algorithm>
+#include <cstring>
+
+namespace live2d {
+
+MatrixManager::MatrixManager() = default;
+
+void MatrixManager::onResize(int w, int h) { mWidth = w; mHeight = h; }
+void MatrixManager::setScale(float s) { mScale = s; }
+void MatrixManager::setOffset(float dx, float dy) { mOffsetX = dx; mOffsetY = dy; }
+void MatrixManager::rotate(float deg) { mRotation = deg; }
+
+// 4x4 matrix multiply: r = a * b (column-major)
+static void mul(float r[16], const float a[16], const float b[16]) {
+    float t[16] = {};
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            t[i + j * 4] = a[i] * b[j * 4] + a[i + 4] * b[j * 4 + 1]
+                         + a[i + 8] * b[j * 4 + 2] + a[i + 12] * b[j * 4 + 3];
+    std::memcpy(r, t, sizeof(t));
+}
+
+std::array<float, 16> MatrixManager::getMvp(L2DModelMatrix* modelMatrix) const {
+    // Match Python v2 MatrixManager.getMvp exactly
+
+    // 1. Model matrix: copy and apply setWidth(2.0)
+    float mm[16] = {};
+    mm[0] = mm[5] = mm[10] = mm[15] = 1.0f;
+
+    float canvasW = modelMatrix->mWidth > 0 ? modelMatrix->mWidth : 1.0f;
+    float canvasH = modelMatrix->mHeight > 0 ? modelMatrix->mHeight : 1.0f;
+
+    // setWidth(2.0): scale_x = 2/w, scale_y = -scale_x
+    float sx_m = 2.0f / canvasW;
+    float sy_m = -sx_m;
+    mm[0] = sx_m * modelMatrix->getScale();
+    mm[5] = sy_m * modelMatrix->getScale();
+
+    // Model matrix translation from centerPosition
+    float mm_w = canvasW * mm[0];  // width * scaleX
+    float mm_h = canvasH * mm[5];  // height * scaleY (negative)
+    mm[12] = 0 - mm_w * 0.5f;       // setCenterPosition(0,0)
+    mm[13] = 0 - mm_h * 0.5f;
+
+    // 2. Projection matrix
+    float proj[16] = {};
+    proj[0] = proj[5] = proj[10] = proj[15] = 1.0f;
+
+    if (mHeight > mWidth) {
+        // height > width: scale(1, w/h)
+        proj[0] = 1.0f;
+        proj[5] = (float)mWidth / mHeight;
+    } else {
+        proj[0] = (float)mHeight / mWidth;
+        proj[5] = 1.0f;
+    }
+
+    // Apply user scale
+    proj[0] *= mScale;
+    proj[5] *= mScale;
+
+    // Apply user offset
+    proj[12] = mOffsetX;
+    proj[13] = mOffsetY;
+
+    // 3. proj = proj * mm
+    mul(proj, proj, mm);
+
+    // 4. Apply rotation: proj = rotation * proj
+    if (mRotation != 0.0f) {
+        float r = mRotation * 3.14159265f / 180.0f;
+        float rot[16] = {};
+        rot[0] = std::cos(r);  rot[4] = std::sin(r);
+        rot[1] = -std::sin(r); rot[5] = std::cos(r);
+        rot[10] = 1.0f; rot[15] = 1.0f;
+        mul(proj, rot, proj);
+    }
+
+    std::array<float, 16> result;
+    std::memcpy(result.data(), proj, sizeof(proj));
+    return result;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\Mesh.cpp --------
+#include "Mesh.hpp"
+#include "MeshContext.hpp"
+#include "BinaryReader.hpp"
+#include "DEF.hpp"
+#include "PivotManager.hpp"
+#include "ModelContext.hpp"
+#include "PartsData.hpp"
+#include "Deformer.hpp"
+#include "DeformerContext.hpp"
+#include "ClipContext.hpp"
+//#include "DrawParamOpenGL.hpp"
+#include "PartsDataContext.hpp"
+#include "UtInterpolate.hpp"
+#include <cstdio>
+#include <stdexcept>
+
+namespace live2d {
+
+static int sInstanceCount = 0;
+
+Mesh::Mesh() : IDrawData() {
+    mInstanceNo = sInstanceCount++;
+}
+
+void Mesh::read(BinaryReader& br) {
+    IDrawData::read(br);
+    mTextureNo = br.readInt32();
+    mPointCount = br.readInt32();
+    mPolygonCount = br.readInt32();
+
+    auto obj = br.readObject<std::vector<int32_t>>();
+    mIndexArray.resize(mPolygonCount * 3);
+    for (int i = mPolygonCount * 3 - 1; i >= 0; i--) {
+        mIndexArray[i] = static_cast<int16_t>(obj[i]);
+    }
+
+    mPivotPoints = br.readObject<std::vector<std::vector<float>>>();
+    mUvs = br.readObject<std::vector<float>>();
+
+    if (br.getFormatVersion() >= LIVE2D_FORMAT_VERSION_V2_8_TEX_OPTION) {
+        mOptionFlag = br.readInt32();
+        int comp = (mOptionFlag & MASK_COLOR_COMPOSITION) >> 1;
+        if (mOptionFlag != 0) {
+            if ((mOptionFlag & 1) != 0) {
+                (void)br.readInt32();
+                throw std::runtime_error("not handled");
+            }
+            if ((mOptionFlag & MASK_COLOR_COMPOSITION) != 0) {
+                mColorCompositionType = (mOptionFlag & MASK_COLOR_COMPOSITION) >> 1;
+            } else {
+                mColorCompositionType = COLOR_COMPOSITION_NORMAL;
+            }
+            if ((mOptionFlag & 32) != 0) {
+                mCulling = false;
+            }
+        }
+    } else {
+        mOptionFlag = 0;
+    }
+}
+
+MeshContext* Mesh::init(ModelContext* modelContext) {
+    auto* ctx = new MeshContext(this);
+    int vertexCount = mPointCount * VERTEX_STEP;
+    bool needXform = needTransform();
+    ctx->mInterpolatedPoints.resize(vertexCount);
+    if (needXform) ctx->mTransformedPoints.resize(vertexCount);
+
+    if (VERTEX_TYPE == VERTEX_TYPE_OFFSET0_STEP2) {
+        if (REVERSE_TEXTURE_T) {
+            for (int i = mPointCount - 1; i >= 0; i--) {
+                int uvOffset = i << 1;
+                mUvs[uvOffset + 1] = 1.0f - mUvs[uvOffset + 1];
+            }
+        }
+    } else if (VERTEX_TYPE == VERTEX_TYPE_OFFSET2_STEP5) {
+        for (int i = mPointCount - 1; i >= 0; i--) {
+            int uvOffset = i << 1;
+            int vOffset = i * VERTEX_STEP;
+            float uvX = mUvs[uvOffset];
+            float uvY = mUvs[uvOffset + 1];
+            ctx->mInterpolatedPoints[vOffset] = uvX;
+            ctx->mInterpolatedPoints[vOffset + 1] = uvY;
+            ctx->mInterpolatedPoints[vOffset + 4] = 0;
+            if (needXform) {
+                ctx->mTransformedPoints[vOffset] = uvX;
+                ctx->mTransformedPoints[vOffset + 1] = uvY;
+                ctx->mTransformedPoints[vOffset + 4] = 0;
+            }
+        }
+    }
+    return ctx;
+}
+
+void Mesh::setupInterpolate(ModelContext* modelContext, MeshContext* meshContext) {
+    if (!mPivotMgr->checkParamUpdated(modelContext)) return;
+    IDrawData::setupInterpolate(modelContext, meshContext);
+    if (meshContext->mParamOutside) return;
+
+    bool paramOutside = false;
+    UtInterpolate::interpolatePoints(modelContext, mPivotMgr, paramOutside,
+                                     mPointCount, mPivotPoints,
+                                     meshContext->mInterpolatedPoints,
+                                     VERTEX_OFFSET, VERTEX_STEP);
+    if (paramOutside) meshContext->mParamOutside = true;
+}
+
+void Mesh::setupTransform(ModelContext* mc, IDrawContext* dc) {
+    auto* ctx = static_cast<MeshContext*>(dc);
+    if (ctx->mParamOutside) return;
+
+    // setupInterpolate already called for drawable level; skip base class call
+    if (needTransform()) {
+        auto* targetId = getTargetId();
+        if (ctx->mTmpDeformerIndex == DEFORMER_INDEX_NOT_INIT)
+            ctx->mTmpDeformerIndex = mc->getDeformerIndex(targetId);
+
+        if (ctx->mTmpDeformerIndex < 0) {
+            printf("deformer not found: %s\n", targetId->str().c_str());
+        } else {
+            auto* deformer = mc->getDeformer(ctx->mTmpDeformerIndex);
+            auto* deformerCtx = mc->getDeformerContext(ctx->mTmpDeformerIndex);
+            if (deformer && !deformerCtx->isOutsideParam()) {
+                deformer->transformPoints(mc, deformerCtx,
+                    ctx->mInterpolatedPoints, ctx->mTransformedPoints,
+                    mPointCount, VERTEX_OFFSET, VERTEX_STEP);
+                ctx->mAvailable = true;
+            } else {
+                ctx->mAvailable = false;
+            }
+            ctx->mBaseOpacity = deformerCtx->getTotalOpacity();
+        }
+    }
+}
+
+int sDrawCounts[3] = {0,0,0};
+#ifdef RenderUse
+void Mesh::draw(OpenGlRender* dp, ModelContext* mctx, MeshContext* dctx)
+{
+#elif RenderReplace
+void Mesh::draw(Render*  dp, ModelContext * mctx, MeshContext * dctx)//之中不增加引用与释放
+{
+#else
+void Mesh::draw(DrawParamOpenGL * dp, ModelContext * mctx, MeshContext * dctx)
+{
+#endif
+    if (dctx->mParamOutside) return;
+    if (mColorCompositionType >= 0 && mColorCompositionType < 3)
+        sDrawCounts[mColorCompositionType]++;
+    int texNr = mTextureNo;
+    if (texNr < 0) texNr = 1;
+
+    auto& vertices = !dctx->mTransformedPoints.empty()
+                         ? dctx->mTransformedPoints
+                         : dctx->mInterpolatedPoints;
+    if (dctx->mClipBufPre_clipContext) {
+        auto* cc = static_cast<ClipContext*>(dctx->mClipBufPre_clipContext);
+        dp->mClipChannel = cc->mLayoutChannelNo;
+        dp->setClipMatrix(cc->mMatrixForDraw.data());
+    }
+    dp->setClipBufPre_clipContextForDraw(dctx->mClipBufPre_clipContext);
+    dp->setCulling(mCulling);
+
+    auto* pctx2 = mctx->getPartsContext(dctx->mPartsIndex);
+    float opacity = getOpacity(dctx) * dctx->mPartsOpacity * dctx->mBaseOpacity;
+    dp->drawTexture(texNr, pctx2->mScreenColor, mIndexArray, vertices, mUvs,
+                    opacity, mColorCompositionType, pctx2->mMultiplyColor);
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\ModelContext.cpp --------
+#include "ModelContext.hpp"
+#include "ALive2DModel.hpp"
+#include "ModelImpl.hpp"
+#include "ParamDefSet.hpp"
+#include "ParamDefFloat.hpp"
+#include "PartsData.hpp"
+#include "PartsDataContext.hpp"
+#include "DEF.hpp"
+#include "Deformer.hpp"
+#include "DeformerContext.hpp"
+#include "RotationContext.hpp"
+#include "AffineEnt.hpp"
+#include "IDrawData.hpp"
+#include "Mesh.hpp"
+#include "MeshContext.hpp"
+//#include "DrawParamOpenGL.hpp"
+//#include "ClippingManagerOpenGL.hpp"
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
+namespace live2d {
+
+ModelContext::ModelContext(ALive2DModel* model) : mModel(model) {
+    mTmpPivotTableIndices.resize(PIVOT_TABLE_SIZE);
+    mTempTArray.resize(MAX_INTERPOLATION);
+#ifdef RenderReplace
+    mDpGL=nullptr;
+#endif
+}
+
+ModelContext::~ModelContext() { release(); }
+
+void ModelContext::release() {
+    mDeformerList.clear(); mDrawDataList.clear(); mPartsDataList.clear();
+    for (auto* ctx : mDeformerContextList) delete ctx;
+    for (auto* ctx : mDrawContextList) delete ctx;
+    for (auto* ctx : mPartsContextList) delete ctx;
+    mDeformerContextList.clear(); mDrawContextList.clear(); mPartsContextList.clear();
+#ifdef RenderReplace
+    //delete mDpGL; Live2DModelOpenGL中删除
+    mDpGL = nullptr;
+#else
+    delete mClipManager; mClipManager = nullptr;
+#endif
+}
+
+void ModelContext::init() {
+    mInitVersion++;
+    if (!mPartsDataList.empty()) release();
+
+    auto* modelImpl = mModel->getModelImpl();
+    auto& partsDataList = modelImpl->getPartsDataList();
+
+    std::vector<Deformer*> allDefs;
+    std::vector<DeformerContext*> allDefCtxs;
+
+    for (auto* part : partsDataList) {
+        mPartsDataList.push_back(part);
+        mPartsContextList.push_back(part->init());
+
+        auto& baseDefs = part->getDeformer();
+        for (auto* d : baseDefs) {
+            allDefs.push_back(d);
+            auto* ctx = d->init(this);
+            ctx->mPartsIndex = static_cast<int>(mPartsContextList.size()) - 1;
+            allDefCtxs.push_back(ctx);
+        }
+
+        auto& drawData = part->getDrawData();
+        for (auto* dd : drawData) {
+            auto* mesh = static_cast<Mesh*>(dd); // drawData is always Mesh in v2
+            auto* meshCtx = mesh->init(this);
+            meshCtx->mPartsIndex = static_cast<int>(mPartsContextList.size()) - 1;
+            mDrawDataList.push_back(mesh);
+            mDrawContextList.push_back(meshCtx);
+        }
+    }
+
+    // DAG sort deformers
+    const Id& dstBase = Id::DST_BASE_ID();
+    size_t nDef = allDefs.size();
+    while (true) {
+        bool progress = false;
+        for (size_t i = 0; i < nDef; i++) {
+            auto* d = allDefs[i];
+            if (!d) continue;
+            auto* target = d->getTargetId();
+            if (!target || *target == dstBase || getDeformerIndex(target) >= 0) {
+                mDeformerList.push_back(d);
+                mDeformerContextList.push_back(allDefCtxs[i]);
+                allDefs[i] = nullptr;
+                progress = true;
+            }
+        }
+        if (!progress) break;
+    }
+
+    auto* paramSet = modelImpl->getParamDefSet();
+    if (paramSet) {
+        for (auto* p : paramSet->getParamDefFloatList()) {
+            if (!p) continue;
+            extendAndAddParam(p->getParamID(), p->getDefaultValue(),
+                              p->getMaxValue(), p->getMinValue());
+        }
+    }
+#ifdef RenderReplace
+    mDpGL->init(this, mDrawDataList, mDrawContextList);
+#else
+    mClipManager = new ClippingManagerOpenGL(mDpGL);
+    mClipManager->init(this, mDrawDataList, mDrawContextList);
+#endif // RenderReplace
+
+    
+    mNeedSetup = true;
+}
+
+void ModelContext::update() {
+    for (size_t i = 0; i < mParamValues.size(); i++) {
+        if (mParamValues[i] != mLastParamValues[i]) {
+            mUpdatedParamFlags[i] = PARAM_UPDATED;
+            mLastParamValues[i] = mParamValues[i];
+        }
+    }
+
+    int nDef = static_cast<int>(mDeformerList.size());
+    int nDraw = static_cast<int>(mDrawDataList.size());
+    int minOrder = IDrawData::getTotalMinOrder();
+    int maxOrder = IDrawData::getTotalMaxOrder();
+    int range = maxOrder - minOrder + 1;
+
+    if (static_cast<int>(mOrderListFirstDrawIndex.size()) < range) {
+        mOrderListFirstDrawIndex.resize(range);
+        mOrderListLastDrawIndex.resize(range);
+    }
+    for (int i = 0; i < range; i++) {
+        mOrderListFirstDrawIndex[i] = NOT_USED_ORDER;
+        mOrderListLastDrawIndex[i] = NOT_USED_ORDER;
+    }
+    if (static_cast<int>(mNextListDrawIndex.size()) < nDraw)
+        mNextListDrawIndex.resize(nDraw);
+    for (int i = 0; i < nDraw; i++) mNextListDrawIndex[i] = NO_NEXT;
+
+    for (int i = 0; i < nDef; i++) {
+        mDeformerList[i]->setupInterpolate(this, mDeformerContextList[i]);
+        mDeformerList[i]->setupTransform(this, mDeformerContextList[i]);
+    }
+
+    for (int i = 0; i < nDraw; i++) {
+        auto* dd = static_cast<Mesh*>(mDrawDataList[i]);
+        auto* ctx = mDrawContextList[i];
+        dd->setupInterpolate(this, ctx);
+        if (ctx->mParamOutside) continue;
+
+        dd->setupTransform(this, ctx);
+        int order = static_cast<int>(std::floor(
+            IDrawData::getDrawOrder(ctx) - minOrder));
+        int lastIdx = mOrderListLastDrawIndex[order];
+        if (lastIdx == NOT_USED_ORDER) mOrderListFirstDrawIndex[order] = i;
+        else mNextListDrawIndex[lastIdx] = i;
+        mOrderListLastDrawIndex[order] = i;
+    }
+
+    // One-time dump ALL deformer and draw data for comparison
+    static bool sDumpDone = false;
+    if (!sDumpDone && getenv("V2CPP_XFORM_DUMP")) {
+        sDumpDone = true;
+        FILE* f = fopen("xform_dump_v2cpp.txt", "w");
+        if (f) {
+            fprintf(f, "=== PARAMS (%zu) ===\n", mParamValues.size());
+            for (size_t i = 0; i < mParamValues.size(); i++)
+                fprintf(f, "[%zu] %s=%.6f\n", i, mParamIdList[i]->str().c_str(), mParamValues[i]);
+            fprintf(f, "\n=== DEFORMERS ===\n");
+            for (size_t i = 0; i < mDeformerList.size(); i++) {
+                auto* def = mDeformerList[i];
+                auto* dctx = mDeformerContextList[i];
+                const char* name = def->getId()->str().c_str();
+                fprintf(f, "[%zu] %s type=%d parent=%s avail=%d scale=%.6f opacity=%.6f\n",
+                    i, name, def->getType(),
+                    def->getTargetId() ? def->getTargetId()->str().c_str() : "?",
+                    dctx->isAvailable() ? 1 : 0,
+                    dctx->getTotalScale(), dctx->getTotalOpacity());
+                // Dump affine values for RotationDeformers
+                if (def->getType() == 1) { // TYPE_ROTATION
+                    auto* rctx = static_cast<RotationContext*>(dctx);
+                    auto* ia = rctx->mInterpolatedAffine;
+                    auto* ta = rctx->mTransformedAffine;
+                    if (ia) fprintf(f, "  interpolated: ox=%.4f oy=%.4f sx=%.4f sy=%.4f rot=%.4f rx=%d ry=%d\n",
+                        ia->mOriginX, ia->mOriginY, ia->mScaleX, ia->mScaleY, ia->mRotationDeg, (int)ia->mReflectX, (int)ia->mReflectY);
+                    if (ta) fprintf(f, "  transformed:  ox=%.4f oy=%.4f sx=%.4f sy=%.4f rot=%.4f rx=%d ry=%d\n",
+                        ta->mOriginX, ta->mOriginY, ta->mScaleX, ta->mScaleY, ta->mRotationDeg, (int)ta->mReflectX, (int)ta->mReflectY);
+                }
+            }
+            fprintf(f, "\n=== DRAWS ===\n");
+            for (size_t i = 0; i < mDrawDataList.size(); i++) {
+                auto* dd = static_cast<Mesh*>(mDrawDataList[i]);
+                auto* ctx = mDrawContextList[i];
+                auto& verts = ctx->mTransformedPoints.empty() ? ctx->mInterpolatedPoints : ctx->mTransformedPoints;
+                const char* did = dd->getId() ? dd->getId()->str().c_str() : "?";
+                const char* pid = mPartsContextList[ctx->mPartsIndex]->mPartsData->getId()->str().c_str();
+                fprintf(f, "[%zu] %s/%s avail=%d nVtx=%zu op=%.3f\n",
+                    i, pid, did, ctx->mAvailable ? 1 : 0,
+                    verts.size() / VERTEX_STEP,
+                    dd->getOpacity(ctx) * ctx->mPartsOpacity * ctx->mBaseOpacity);
+                // Dump all vertices
+                for (size_t v = VERTEX_OFFSET; v < verts.size(); v += VERTEX_STEP)
+                    fprintf(f, "  vtx[%zu]=(%.4f,%.4f)\n", (v-VERTEX_OFFSET)/VERTEX_STEP, verts[v], verts[v+1]);
+            }
+            fclose(f);
+        }
+    }
+
+    for (int i = static_cast<int>(mUpdatedParamFlags.size()) - 1; i >= 0; i--)
+        mUpdatedParamFlags[i] = false;
+    mNeedSetup = false;
+}
+#ifdef RenderUse
+void ModelContext::preDraw(OpenGlRender* dp)
+{
+    if (mClipManager) { dp->setupDraw(); mClipManager->setupClip(this, dp); }
+}
+#elif RenderReplace
+void ModelContext::preDraw(std::shared_ptr<Render> dp)
+{
+    if (dp) { dp->setupDraw(); dp->setupClip(this); }
+}
+#else
+void ModelContext::preDraw(DrawParamOpenGL* dp)
+{
+    if (mClipManager) { dp->setupDraw(); mClipManager->setupClip(this, dp); }
+}
+#endif // Render
+#ifdef RenderUse
+void ModelContext::draw(OpenGlRender* dp)
+{
+#elif RenderReplace
+void ModelContext::draw(std::shared_ptr<Render> dp)
+{
+#else
+void ModelContext::draw(DrawParamOpenGL* dp)
+{
+#endif // Render
+
+
+    if (mOrderListFirstDrawIndex.empty()) return;
+    dp->setupDraw();
+    for (size_t i = 0; i < mOrderListFirstDrawIndex.size(); i++) {
+        int idx = mOrderListFirstDrawIndex[i];
+        if (idx == NOT_USED_ORDER) continue;
+        while (true) {
+            auto* dd = static_cast<Mesh*>(mDrawDataList[idx]);
+            auto* ctx = mDrawContextList[idx];
+            const char* pid = mPartsContextList[ctx->mPartsIndex]->mPartsData->getId()->str().c_str();
+            if (ctx->mAvailable) {
+                ctx->mPartsOpacity = mPartsContextList[ctx->mPartsIndex]->getPartsOpacity();
+                const char* lbl = mDrawDataList[idx]->getId() ? mDrawDataList[idx]->getId()->str().c_str() : "?";
+                if (glPushDebugGroup) glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, lbl);
+                dd->draw(dp.get(), this, ctx);
+                if (glPopDebugGroup) glPopDebugGroup();
+                // Per-draw framebuffer dump (enable with V2CPP_DUMP env var)
+                static bool sDumpFrames = (getenv("V2CPP_DUMP") != nullptr);
+                static int sFrameIdx = 0;
+                if (sDumpFrames && sFrameIdx < 25) {
+                    sFrameIdx++;
+                    char fname[64];
+                    snprintf(fname, sizeof(fname), "frame_%02d_%s.ppm", sFrameIdx,
+                             mDrawDataList[idx]->getId()->str().c_str());
+                    int vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
+                    std::vector<uint8_t> px(vp[2] * vp[3] * 4);
+                    glReadPixels(0, 0, vp[2], vp[3], GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                    FILE* fp = fopen(fname, "wb");
+                    if (fp) {
+                        fprintf(fp, "P6\n%d %d\n255\n", vp[2], vp[3]);
+                        for (int y = vp[3]-1; y >= 0; y--)
+                            for (int x = 0; x < vp[2]; x++) {
+                                int pi = (y * vp[2] + x) * 4;
+                                fputc(px[pi], fp); fputc(px[pi+1], fp); fputc(px[pi+2], fp);
+                            }
+                        fclose(fp);
+                    }
+                }
+            }
+            int next = mNextListDrawIndex[idx];
+            if (next <= idx || next == NO_NEXT) break;
+            idx = next;
+        }
+    }
+    dp->endDraw();
+}
+
+int ModelContext::getParamIndex(const Id* paramId) {
+    for (size_t i = 0; i < mParamIdList.size(); i++)
+        if (mParamIdList[i] == paramId) return static_cast<int>(i);
+    return extendAndAddParam(paramId, 0, PARAM_FLOAT_MAX, PARAM_FLOAT_MIN);
+}
+
+int ModelContext::getDeformerIndex(const Id* id) {
+    for (int i = static_cast<int>(mDeformerList.size()) - 1; i >= 0; i--)
+        if (mDeformerList[i] && mDeformerList[i]->getId() == id) return i;
+    return -1;
+}
+
+int ModelContext::extendAndAddParam(const Id* paramId, float dv, float maxV, float minV) {
+    mParamIdList.push_back(paramId);
+    mParamValues.push_back(dv); mLastParamValues.push_back(dv);
+    mParamMinValues.push_back(minV); mParamMaxValues.push_back(maxV);
+    mParamDefaultValues.push_back(dv);
+    mUpdatedParamFlags.push_back(false);
+    return mNextParamPos++;
+}
+
+void ModelContext::setParamFloat(int index, float value) {
+    if (value < mParamMinValues[index]) value = mParamMinValues[index];
+    if (value > mParamMaxValues[index]) value = mParamMaxValues[index];
+    mParamValues[index] = value;
+}
+
+float ModelContext::getParamFloat(int index) const {
+    return (index >= 0 && index < (int)mParamValues.size()) ? mParamValues[index] : 0;
+}
+
+float ModelContext::getParamMax(int index) const { return mParamMaxValues[index]; }
+float ModelContext::getParamMin(int index) const { return mParamMinValues[index]; }
+float ModelContext::getParamDefault(int index) const { return mParamDefaultValues[index]; }
+bool ModelContext::isParamUpdated(int index) const { return mUpdatedParamFlags[index]; }
+
+void ModelContext::loadParam() {
+    for (size_t i = 0; i < mSavedParamValues.size(); i++) mParamValues[i] = mSavedParamValues[i];
+}
+void ModelContext::saveParam() {
+    if (mSavedParamValues.size() < mParamValues.size()) mSavedParamValues.resize(mParamValues.size());
+    for (size_t i = 0; i < mParamValues.size(); i++) mSavedParamValues[i] = mParamValues[i];
+}
+
+IDrawData* ModelContext::getDrawData(int index) const {
+    return (index >= 0 && index < (int)mDrawDataList.size()) ? mDrawDataList[index] : nullptr;
+}
+int ModelContext::getDrawDataIndex(const Id* drawDataId) const {
+    for (int i = (int)mDrawDataList.size() - 1; i >= 0; i--)
+        if (mDrawDataList[i] && mDrawDataList[i]->getId() == drawDataId) return i;
+    return -1;
+}
+int ModelContext::getPartsDataIndex(const Id* id) const {
+    for (int i = (int)mPartsDataList.size() - 1; i >= 0; i--)
+        if (mPartsDataList[i] && mPartsDataList[i]->getId() == id) return i;
+    return -1;
+}
+void ModelContext::setPartsOpacity(int i, float op) { mPartsContextList[i]->setPartsOpacity(op); }
+float ModelContext::getPartsOpacity(int i) const { return mPartsContextList[i]->getPartsOpacity(); }
+void ModelContext::setPartMultiplyColor(int i, float r, float g, float b, float a) {
+    mPartsContextList[i]->setPartMultiplyColor(r, g, b, a);
+}
+void ModelContext::setPartScreenColor(int i, float r, float g, float b, float a) {
+    mPartsContextList[i]->setPartScreenColor(r, g, b, a);
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\ModelImpl.cpp --------
+#include "ModelImpl.hpp"
+#include "ParamDefSet.hpp"
+#include "PartsData.hpp"
+#include "BinaryReader.hpp"
+
+namespace live2d {
+
+void ModelImpl::read(BinaryReader& br) {
+    mParamDefSet = br.readObject<ParamDefSet*>();
+    mPartsDataList = br.readObject<std::vector<PartsData*>>();
+    mCanvasWidth = br.readInt32();
+    mCanvasHeight = br.readInt32();
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\ParamDefFloat.cpp --------
+#include "ParamDefFloat.hpp"
+#include "BinaryReader.hpp"
+
+namespace live2d {
+
+void ParamDefFloat::read(BinaryReader& br) {
+    mMinValue = br.readFloat32();
+    mMaxValue = br.readFloat32();
+    mDefaultValue = br.readFloat32();
+    mParamId = br.readObject<const Id*>();
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\ParamDefSet.cpp --------
+#include "ParamDefSet.hpp"
+#include "BinaryReader.hpp"
+
+namespace live2d {
+
+void ParamDefSet::read(BinaryReader& br) {
+    mParamDefList = br.readObject<std::vector<ParamDefFloat*>>();
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\ParamPivots.cpp --------
+#include "ParamPivots.hpp"
+#include "BinaryReader.hpp"
+
+namespace live2d {
+
+void ParamPivots::read(BinaryReader& br) {
+    mParamId = br.readObject<const Id*>();
+    mPivotCount = br.readInt32();
+    mPivotValues = br.readObject<std::vector<float>>();
+}
+
+int ParamPivots::getParamIndex(int initVersion) {
+    if (mInitVersion != initVersion) {
+        mParamIndex = PARAM_INDEX_NOT_INIT;
+    }
+    return mParamIndex;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\PartsData.cpp --------
+#include "PartsData.hpp"
+#include "PartsDataContext.hpp"
+#include "BinaryReader.hpp"
+
+namespace live2d {
+
+void PartsData::read(BinaryReader& br) {
+    mLocked = br.readBit();
+    mVisible = br.readBit();
+    mId = br.readObject<const Id*>();
+    mDeformerList = br.readObject<std::vector<Deformer*>>();
+    mDrawDataList = br.readObject<std::vector<IDrawData*>>();
+}
+
+PartsDataContext* PartsData::init() {
+    auto* ctx = new PartsDataContext(this);
+    ctx->setPartsOpacity(isVisible() ? 1.0f : 0.0f);
+    return ctx;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\PartsDataContext.cpp --------
+#include "PartsDataContext.hpp"
+
+namespace live2d {
+
+void PartsDataContext::setPartScreenColor(float r, float g, float b, float a) {
+    mScreenColor = {r, g, b, a};
+}
+
+void PartsDataContext::setPartMultiplyColor(float r, float g, float b, float a) {
+    mMultiplyColor = {r, g, b, a};
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\PhysicsHair.cpp --------
+#include "PhysicsHair.hpp"
+#include "ALive2DModel.hpp"
+#include "ModelContext.hpp"
+#include "Id.hpp"
+#include "UtMath.hpp"
+#include <cmath>
+
+namespace live2d {
+
+// ---- PhysicsSrc ----
+void PhysicsSrc::update(ALive2DModel* model, PhysicsHair* ctx) {
+    auto* mc = model->getModelContext();
+    int idx = mc->getParamIndex(&Id::getID(paramId));
+    if (idx < 0) return;
+    float scaledValue = scale * mc->getParamFloat(idx);
+    auto& p1 = ctx->getP1();
+
+    if (type == SRC_TO_X)
+        p1.x += (scaledValue - p1.x) * weight;
+    else if (type == SRC_TO_Y)
+        p1.y += (scaledValue - p1.y) * weight;
+    else if (type == SRC_TO_G_ANGLE) {
+        float a = ctx->getAngle();
+        a += (scaledValue - a) * weight;
+        ctx->setAngle(a);
+    }
+}
+
+// ---- PhysicsTarget ----
+void PhysicsTarget::update(ALive2DModel* model, PhysicsHair* ctx) {
+    auto* mc = model->getModelContext();
+    int idx = mc->getParamIndex(&Id::getID(paramId));
+    if (idx < 0) return;
+    if (type == TARGET_FROM_ANGLE)
+        mc->setParamFloat(idx, scale * ctx->getLastAngle());
+    else if (type == TARGET_FROM_ANGLE_V)
+        mc->setParamFloat(idx, scale * ctx->getLastAngleVelocity());
+}
+
+// ---- PhysicsHair ----
+PhysicsHair::PhysicsHair() { setup(0.3f, 0.5f, 0.1f); }
+
+void PhysicsHair::setup(float l, float stiff, float mass) {
+    currentAngle = calcAngle();
+    p2.setupLast();
+    length = l;
+    stiffness = stiff;
+    p1.mass = mass;
+    p2.mass = mass;
+    p2.y = l;
+}
+
+float PhysicsHair::calcAngle() const {
+    return -180.0f * std::atan2(p1.x - p2.x, -(p1.y - p2.y)) / 3.14159265f;
+}
+
+void PhysicsHair::addSrcParam(PhysicsSrcType t, const std::string& id, float scale, float weight) {
+    sourceParams.push_back({t, id, scale, weight});
+}
+void PhysicsHair::addTargetParam(PhysicsTargetType t, const std::string& id, float scale, float weight) {
+    targetParams.push_back({t, id, scale, weight});
+}
+
+void PhysicsHair::update(ALive2DModel* model, long long timeMs) {
+    if (lastTime == 0) {
+        lastTime = currentTime = timeMs;
+        float dx = p1.x - p2.x, dy = p1.y - p2.y;
+        length = std::sqrt(dx * dx + dy * dy);
+        return;
+    }
+    float deltaSec = (float)(timeMs - currentTime) / 1000.0f;
+    if (deltaSec != 0) {
+        for (auto& s : sourceParams) s.update(model, this);
+        updatePhysics(model, deltaSec);
+        lastAngle = calcAngle();
+        angleVelocity = (lastAngle - currentAngle) / deltaSec;
+        currentAngle = lastAngle;
+    }
+    for (auto& t : targetParams) t.update(model, this);
+    currentTime = timeMs;
+}
+
+void PhysicsHair::updatePhysics(ALive2DModel*, float deltaSec) {
+    if (deltaSec < 0.033f) deltaSec = 0.033f;
+    float inv = 1.0f / deltaSec;
+
+    p1.vx = (p1.x - p1.lastX) * inv;
+    p1.vy = (p1.y - p1.lastY) * inv;
+    p1.ax = (p1.vx - p1.lastVX) * inv;
+    p1.ay = (p1.vy - p1.lastVY) * inv;
+    p1.fx = p1.ax * p1.mass;
+    p1.fy = p1.ay * p1.mass;
+    p1.setupLast();
+
+    float a = -std::atan2(p1.y - p2.y, p1.x - p2.x);
+    float cs = std::cos(a), sn = std::sin(a);
+    float gravity = 9.8f * p2.mass;
+    float aRad = angle * 3.14159265f / 180.0f;
+    float gForce = gravity * std::cos(a - aRad);
+    float fX = gForce * sn;
+    float fY = gForce * cs;
+    float dragX = -p1.fx * sn * sn;
+    float dragY = -p1.fy * sn * cs;
+    float stiffX = -p2.vx * stiffness;
+    float stiffY = -p2.vy * stiffness;
+
+    p2.fx = fX + dragX + stiffX;
+    p2.fy = fY + dragY + stiffY;
+    p2.ax = p2.fx / p2.mass;
+    p2.ay = p2.fy / p2.mass;
+    p2.vx += p2.ax * deltaSec;
+    p2.vy += p2.ay * deltaSec;
+    p2.x += p2.vx * deltaSec;
+    p2.y += p2.vy * deltaSec;
+
+    float dx = p1.x - p2.x, dy = p1.y - p2.y;
+    float dist = std::sqrt(dx * dx + dy * dy);
+    p2.x = p1.x + length * (p2.x - p1.x) / dist;
+    p2.y = p1.y + length * (p2.y - p1.y) / dist;
+    p2.vx = (p2.x - p2.lastX) * inv;
+    p2.vy = (p2.y - p2.lastY) * inv;
+    p2.setupLast();
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\PivotManager.cpp --------
+#include "PivotManager.hpp"
+#include "ParamPivots.hpp"
+#include "BinaryReader.hpp"
+#include "ModelContext.hpp"
+#include "DEF.hpp"
+#include <cstdio>
+#include <stdexcept>
+
+namespace live2d {
+
+void PivotManager::read(BinaryReader& br) {
+    mParamPivotTable = br.readObject<std::vector<ParamPivots*>>();
+}
+
+bool PivotManager::checkParamUpdated(ModelContext* modelContext) {
+    if (modelContext->requireSetup()) return true;
+
+    int initVersion = modelContext->getInitVersion();
+    for (int i = static_cast<int>(mParamPivotTable.size()) - 1; i >= 0; i--) {
+        int paramIndex = mParamPivotTable[i]->getParamIndex(initVersion);
+        if (paramIndex == ParamPivots::PARAM_INDEX_NOT_INIT) {
+            paramIndex = modelContext->getParamIndex(mParamPivotTable[i]->getParamID());
+        }
+        if (modelContext->isParamUpdated(paramIndex)) return true;
+    }
+    return false;
+}
+
+int PivotManager::calcPivotValues(ModelContext* modelContext, bool& outRet) {
+    int paramCount = static_cast<int>(mParamPivotTable.size());
+    int initVersion = modelContext->getInitVersion();
+    int interpolationCount = 0;
+
+    for (int i = 0; i < paramCount; i++) {
+        auto* pp = mParamPivotTable[i];
+        int paramIndex = pp->getParamIndex(initVersion);
+        if (paramIndex == ParamPivots::PARAM_INDEX_NOT_INIT) {
+            paramIndex = modelContext->getParamIndex(pp->getParamID());
+            pp->setParamIndex(paramIndex, initVersion);
+        }
+
+        float paramValue = (paramIndex < 0) ? 0.0f
+                            : modelContext->getParamFloat(paramIndex);
+        int pivotCount = pp->getPivotCount();
+        auto& pivotValues = pp->getPivotValues();
+
+        int pivotIndex = -1;
+        float t = 0.0f;
+
+        if (pivotCount < 1) {
+            // nothing
+        } else if (pivotCount == 1) {
+            float pivotValue = pivotValues[0];
+            if (pivotValue - GOSA < paramValue && paramValue < pivotValue + GOSA) {
+                pivotIndex = 0;
+                t = 0.0f;
+            } else {
+                pivotIndex = 0;
+                outRet = true;
+            }
+        } else {
+            float pivotValue = pivotValues[0];
+            if (paramValue < pivotValue - GOSA) {
+                pivotIndex = 0;
+                outRet = true;
+            } else if (paramValue < pivotValue + GOSA) {
+                pivotIndex = 0;
+            } else {
+                bool found = false;
+                for (int j = 1; j < pivotCount; j++) {
+                    float nextPivotValue = pivotValues[j];
+                    if (paramValue < nextPivotValue + GOSA) {
+                        if (nextPivotValue - GOSA < paramValue) {
+                            pivotIndex = j;
+                        } else {
+                            pivotIndex = j - 1;
+                            t = (paramValue - pivotValue) / (nextPivotValue - pivotValue);
+                            interpolationCount++;
+                        }
+                        found = true;
+                        break;
+                    }
+                    pivotValue = nextPivotValue;
+                }
+                if (!found) {
+                    pivotIndex = pivotCount - 1;
+                    t = 0.0f;
+                    outRet = true;
+                }
+            }
+        }
+
+        pp->setTmpPivotIndex(pivotIndex);
+        pp->setTmpT(t);
+    }
+    return interpolationCount;
+}
+
+void PivotManager::calcPivotIndices(std::vector<int16_t>& indexArray,
+                                   std::vector<float>& tArray,
+                                   int interpolationCount) {
+    int tableSize = 1 << interpolationCount;
+    if (tableSize + 1 > PIVOT_TABLE_SIZE) {
+        printf("err 23245\n");
+    }
+
+    int paramCount = static_cast<int>(mParamPivotTable.size());
+    int stride = 1, divisor = 1, tIndex = 0;
+
+    for (int i = 0; i < tableSize; i++) indexArray[i] = 0;
+
+    for (int i = 0; i < paramCount; i++) {
+        auto* pp = mParamPivotTable[i];
+        if (pp->getTmpT() == 0.0f) {
+            int offset = pp->getTmpPivotIndex() * stride;
+            for (int j = 0; j < tableSize; j++) indexArray[j] += offset;
+        } else {
+            int offset1 = stride * pp->getTmpPivotIndex();
+            int offset2 = stride * (pp->getTmpPivotIndex() + 1);
+            for (int j = 0; j < tableSize; j++)
+                indexArray[j] += ((j / divisor) % 2 == 0) ? offset1 : offset2;
+            tArray[tIndex] = pp->getTmpT();
+            tIndex++;
+            divisor *= 2;
+        }
+        stride *= pp->getPivotCount();
+    }
+    indexArray[tableSize] = 65535;
+    tArray[tIndex] = -1.0f;
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\RotationContext.cpp --------
+#include "RotationContext.hpp"
+#include "RotationDeformer.hpp"
+#include "AffineEnt.hpp"
+
+namespace live2d {
+
+RotationContext::RotationContext(RotationDeformer* deformer)
+    : DeformerContext(deformer)
+    , mRotationDeformer(deformer)
+    , mInterpolatedAffine(new AffineEnt()) {
+    if (deformer->needTransform()) {
+        mTransformedAffine = new AffineEnt();
+    }
+}
+RotationContext::~RotationContext()
+{
+    if (mInterpolatedAffine)
+    {
+        delete mInterpolatedAffine;
+    };
+    if (mTransformedAffine)
+    {
+        delete mTransformedAffine;
+    };
+}
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\RotationDeformer.cpp --------
+#include "RotationDeformer.hpp"
+#include "RotationContext.hpp"
+#include "AffineEnt.hpp"
+#include "DeformerContext.hpp"
+#include "BinaryReader.hpp"
+#include "PivotManager.hpp"
+#include "ModelContext.hpp"
+#include "UtMath.hpp"
+#include <cmath>
+#include <cstdio>
+
+namespace live2d {
+
+void RotationDeformer::read(BinaryReader& br) {
+    Deformer::read(br);
+    mPivotManager = br.readObject<PivotManager*>();
+    mAffines = br.readObject<std::vector<AffineEnt*>>();
+    Deformer::readOpacity(br);
+}
+
+DeformerContext* RotationDeformer::init(ModelContext* mc) {
+    (void)mc;
+    return new RotationContext(this);
+}
+
+void RotationDeformer::setupInterpolate(ModelContext* mc, DeformerContext* dc) {
+    auto* rctx = static_cast<RotationContext*>(dc);
+    if (!mPivotManager->checkParamUpdated(mc)) return;
+
+    bool success = false;
+    int pivotCount = mPivotManager->calcPivotValues(mc, success);
+    rctx->setOutsideParam(success);
+    interpolateOpacity(mc, mPivotManager, rctx, success);
+
+    auto& pivotIndices = mc->getTempPivotTableIndices();
+    auto& pivotT = mc->getTempT();
+    mPivotManager->calcPivotIndices(pivotIndices, pivotT, pivotCount);
+
+    if (pivotCount <= 0) {
+        auto* a = mAffines[pivotIndices[0]];
+        rctx->mInterpolatedAffine->mOriginX = a->mOriginX;
+        rctx->mInterpolatedAffine->mOriginY = a->mOriginY;
+        rctx->mInterpolatedAffine->mScaleX = a->mScaleX;
+        rctx->mInterpolatedAffine->mScaleY = a->mScaleY;
+        rctx->mInterpolatedAffine->mRotationDeg = a->mRotationDeg;
+    } else {
+        int tableSize = 1 << pivotCount;
+        std::vector<float> weights(tableSize);
+        for (int i = 0; i < tableSize; i++) {
+            float idx = static_cast<float>(i), w = 1.0f;
+            for (int j = 0; j < pivotCount; j++) {
+                w *= (static_cast<int>(idx) % 2 == 0) ? (1.0f - pivotT[j]) : pivotT[j];
+                idx /= 2.0f;
+            }
+            weights[i] = w;
+        }
+        float ox = 0, oy = 0, sx = 0, sy = 0, rot = 0;
+        for (int i = 0; i < tableSize; i++) {
+            auto* a = mAffines[pivotIndices[i]];
+            ox += weights[i] * a->mOriginX; oy += weights[i] * a->mOriginY;
+            sx += weights[i] * a->mScaleX; sy += weights[i] * a->mScaleY;
+            rot += weights[i] * a->mRotationDeg;
+        }
+        rctx->mInterpolatedAffine->mOriginX = ox; rctx->mInterpolatedAffine->mOriginY = oy;
+        rctx->mInterpolatedAffine->mScaleX = sx; rctx->mInterpolatedAffine->mScaleY = sy;
+        rctx->mInterpolatedAffine->mRotationDeg = rot;
+    }
+    auto* ref = mAffines[pivotIndices[0]];
+    rctx->mInterpolatedAffine->mReflectX = ref->mReflectX;
+    rctx->mInterpolatedAffine->mReflectY = ref->mReflectY;
+}
+
+static void getDirectionOnDst(ModelContext* mc, Deformer* targetDef, DeformerContext* tgtCtx,
+                              float ox, float oy, float dx, float dy, float retDir[2]) {
+    std::vector<float> tpVec = {ox, oy};
+    std::vector<float> toVec(2);
+    targetDef->transformPoints(mc, tgtCtx, tpVec, toVec, 1, 0, 2);
+
+    float stepSize = 1.0f;
+    for (int it = 0; it < 10; it++) {
+        std::vector<float> testVec = {ox + stepSize * dx, oy + stepSize * dy};
+        std::vector<float> transVec(2);
+        targetDef->transformPoints(mc, tgtCtx, testVec, transVec, 1, 0, 2);
+        transVec[0] -= toVec[0]; transVec[1] -= toVec[1];
+        if (transVec[0] != 0 || transVec[1] != 0) {
+            retDir[0] = transVec[0]; retDir[1] = transVec[1];
+            return;
+        }
+        testVec = {ox - stepSize * dx, oy - stepSize * dy};
+        targetDef->transformPoints(mc, tgtCtx, testVec, transVec, 1, 0, 2);
+        transVec[0] -= toVec[0]; transVec[1] -= toVec[1];
+        if (transVec[0] != 0 || transVec[1] != 0) {
+            retDir[0] = -transVec[0]; retDir[1] = -transVec[1];
+            return;
+        }
+        stepSize *= 0.1f;
+    }
+}
+
+bool RotationDeformer::setupTransform(ModelContext* mc, DeformerContext* dc) {
+    auto* rctx = static_cast<RotationContext*>(dc);
+    rctx->setAvailable(true);
+
+    if (!needTransform()) {
+        rctx->setTotalScale_notForClient(rctx->mInterpolatedAffine->mScaleX);
+        rctx->setTotalOpacity(rctx->getInterpolatedOpacity());
+        return true;
+    }
+
+    auto* targetId = getTargetId();
+    if (rctx->mTmpDeformerIndex == DEFORMER_INDEX_NOT_INIT)
+        rctx->mTmpDeformerIndex = mc->getDeformerIndex(targetId);
+
+    if (rctx->mTmpDeformerIndex < 0) {
+        rctx->setAvailable(false);
+        return false;
+    }
+
+    auto* parentDef = mc->getDeformer(rctx->mTmpDeformerIndex);
+    auto* parentCtx = mc->getDeformerContext(rctx->mTmpDeformerIndex);
+    if (!parentDef || !parentCtx) { rctx->setAvailable(false); return false; }
+
+    float ox = rctx->mInterpolatedAffine->mOriginX;
+    float oy = rctx->mInterpolatedAffine->mOriginY;
+    float dx = 0, dy = (parentCtx->getDeformer()->getType() == TYPE_ROTATION) ? -10.0f : -0.1f;
+
+    float tDir[2];
+    getDirectionOnDst(mc, parentDef, parentCtx, ox, oy, dx, dy, tDir);
+    float dir[2] = {dx, dy};
+    float angle = UtMath::getAngleNotAbs(dir, tDir);
+
+    std::vector<float> originVec = {ox, oy};
+    std::vector<float> originDst(2);
+    parentDef->transformPoints(mc, parentCtx, originVec, originDst, 1, 0, 2);
+
+    rctx->mTransformedAffine->mOriginX = originDst[0];
+    rctx->mTransformedAffine->mOriginY = originDst[1];
+    rctx->mTransformedAffine->mScaleX = rctx->mInterpolatedAffine->mScaleX;
+    rctx->mTransformedAffine->mScaleY = rctx->mInterpolatedAffine->mScaleY;
+    rctx->mTransformedAffine->mRotationDeg =
+        rctx->mInterpolatedAffine->mRotationDeg - angle * UtMath::RAD_TO_DEG;
+
+    float ps = parentCtx->getTotalScale();
+    rctx->setTotalScale_notForClient(ps * rctx->mTransformedAffine->mScaleX);
+    rctx->setTotalOpacity(parentCtx->getTotalOpacity() * rctx->getInterpolatedOpacity());
+    rctx->mTransformedAffine->mReflectX = rctx->mInterpolatedAffine->mReflectX;
+    rctx->mTransformedAffine->mReflectY = rctx->mInterpolatedAffine->mReflectY;
+    rctx->setAvailable(parentCtx->isAvailable());
+    return rctx->isAvailable();
+}
+
+void RotationDeformer::transformPoints(ModelContext*, DeformerContext* dc,
+                                       const std::vector<float>& src,
+                                       std::vector<float>& dst,
+                                       int numPoint, int ptOffset, int ptStep) {
+    auto* rctx = static_cast<RotationContext*>(dc);
+    auto* af = rctx->mTransformedAffine ? rctx->mTransformedAffine
+                                        : rctx->mInterpolatedAffine;
+    float sinR = std::sin(UtMath::DEG_TO_RAD * af->mRotationDeg);
+    float cosR = std::cos(UtMath::DEG_TO_RAD * af->mRotationDeg);
+    float ts = rctx->getTotalScale();
+    float rx = af->mReflectX ? -1.0f : 1.0f, ry = af->mReflectY ? -1.0f : 1.0f;
+    float sx = cosR * ts * rx, shx = -sinR * ts * ry;
+    float shy = sinR * ts * rx, sy = cosR * ts * ry;
+    float ox = af->mOriginX, oy = af->mOriginY;
+
+    int total = numPoint * ptStep;
+    for (int i = ptOffset; i < total; i += ptStep) {
+        float x = src[i], y = src[i + 1];
+        dst[i] = sx * x + shx * y + ox;
+        dst[i + 1] = shy * x + sy * y + oy;
+    }
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\stb_impl.cpp --------
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\UtInterpolate.cpp --------
+#include "UtInterpolate.hpp"
+#include "ModelContext.hpp"
+#include "PivotManager.hpp"
+#include <cmath>
+
+namespace live2d {
+
+static void arraycopy(const float* src, int srcOff, float* dst, int dstOff, int count) {
+    for (int i = 0; i < count; i++) dst[dstOff + i] = src[srcOff + i];
+}
+
+float UtInterpolate::interpolateFloat(ModelContext* mdc, PivotManager* pivotMgr, bool& ret,
+                                      const std::vector<float>& pivotValue) {
+    int interpCount = pivotMgr->calcPivotValues(mdc, ret);
+    auto& indices = mdc->getTempPivotTableIndices();
+    auto& tVals = mdc->getTempT();
+    pivotMgr->calcPivotIndices(indices, tVals, interpCount);
+
+    if (interpCount <= 0) return pivotValue[indices[0]];
+
+    if (interpCount == 1) {
+        float bj = pivotValue[indices[0]], bi = pivotValue[indices[1]];
+        return bj + (bi - bj) * tVals[0];
+    }
+
+    // Generic path for interpCount >= 2
+    int tableSize = 1 << interpCount;
+    std::vector<float> weights(tableSize);
+    for (int i = 0; i < tableSize; i++) {
+        float idx = static_cast<float>(i);
+        float w = 1.0f;
+        for (int j = 0; j < interpCount; j++) {
+            w *= (static_cast<int>(idx) % 2 == 0) ? (1.0f - tVals[j]) : tVals[j];
+            idx /= 2.0f;
+        }
+        weights[i] = w;
+    }
+
+    float result = 0.0f;
+    for (int i = 0; i < tableSize; i++) {
+        result += weights[i] * pivotValue[indices[i]];
+    }
+    return result;
+}
+
+int UtInterpolate::interpolateInt(ModelContext* mdc, PivotManager* pivotMgr, bool& ret,
+                                   const std::vector<int>& pivotValue) {
+    int interpCount = pivotMgr->calcPivotValues(mdc, ret);
+    auto& indices = mdc->getTempPivotTableIndices();
+    auto& tVals = mdc->getTempT();
+    pivotMgr->calcPivotIndices(indices, tVals, interpCount);
+
+    if (interpCount <= 0) return pivotValue[indices[0]];
+
+    int tableSize = 1 << interpCount;
+    std::vector<float> weights(tableSize);
+    for (int i = 0; i < tableSize; i++) {
+        float idx = static_cast<float>(i);
+        float w = 1.0f;
+        for (int j = 0; j < interpCount; j++) {
+            w *= (static_cast<int>(idx) % 2 == 0) ? (1.0f - tVals[j]) : tVals[j];
+            idx /= 2.0f;
+        }
+        weights[i] = w;
+    }
+
+    float result = 0.0f;
+    for (int i = 0; i < tableSize; i++) {
+        result += weights[i] * static_cast<float>(pivotValue[indices[i]]);
+    }
+    return static_cast<int>(result + 0.5f);
+}
+
+void UtInterpolate::interpolatePoints(ModelContext* mdc, PivotManager* pivotMgr, bool& ret,
+                                      int pointCount,
+                                      const std::vector<std::vector<float>>& pivotPoints,
+                                      std::vector<float>& dstPoints, int ptOffset, int ptStep) {
+    int interpCount = pivotMgr->calcPivotValues(mdc, ret);
+    auto& indices = mdc->getTempPivotTableIndices();
+    auto& tVals = mdc->getTempT();
+    pivotMgr->calcPivotIndices(indices, tVals, interpCount);
+
+    int coordCount = pointCount * 2;
+    int dstIdx = ptOffset;
+
+    if (interpCount <= 0) {
+        auto& base = pivotPoints[indices[0]];
+        if (ptStep == 2 && ptOffset == 0) {
+            arraycopy(base.data(), 0, dstPoints.data(), 0, coordCount);
+        } else {
+            for (int i = 0; i < coordCount; i += 2) {
+                dstPoints[dstIdx] = base[i];
+                dstPoints[dstIdx + 1] = base[i + 1];
+                dstIdx += ptStep;
+            }
+        }
+        return;
+    }
+
+    int tableSize = 1 << interpCount;
+    std::vector<float> weights(tableSize);
+    for (int i = 0; i < tableSize; i++) {
+        float idx = static_cast<float>(i);
+        float w = 1.0f;
+        for (int j = 0; j < interpCount; j++) {
+            w *= (static_cast<int>(idx) % 2 == 0) ? (1.0f - tVals[j]) : tVals[j];
+            idx /= 2.0f;
+        }
+        weights[i] = w;
+    }
+
+    for (int i = 0; i < coordCount; i += 2) {
+        float x = 0.0f, y = 0.0f;
+        for (int j = 0; j < tableSize; j++) {
+            auto& base = pivotPoints[indices[j]];
+            x += weights[j] * base[i];
+            y += weights[j] * base[i + 1];
+        }
+        dstPoints[dstIdx] = x;
+        dstPoints[dstIdx + 1] = y;
+        dstIdx += ptStep;
+    }
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\UtSystem.cpp --------
+#include "UtSystem.hpp"
+#include <chrono>
+
+namespace live2d {
+
+double UtSystem::getUserTimeMSec() {
+    auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration<double, std::milli>(
+               now.time_since_epoch()).count();
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\WarpContext.cpp --------
+#include "WarpContext.hpp"
+#include "WarpDeformer.hpp"
+
+namespace live2d {
+
+WarpContext::WarpContext(WarpDeformer* deformer)
+    : DeformerContext(deformer)
+    , mWarpDeformer(deformer) {
+    int pointCount = deformer->getPointCount();
+    mInterpolatedPoints.resize(pointCount * 2);
+
+    if (deformer->needTransform()) {
+        mTransformedPoints.resize(pointCount * 2);
+    }
+}
+
+} // namespace live2d
+
+
+// -------- D:\Code\vs_cpp_code\CppLive2dReplace\Sorce\src\WarpDeformer.cpp --------
+#include "WarpDeformer.hpp"
+#include "WarpContext.hpp"
+#include "DeformerContext.hpp"
+#include "BinaryReader.hpp"
+#include "PivotManager.hpp"
+#include "ModelContext.hpp"
+#include "UtInterpolate.hpp"
+#include <cmath>
+#include <cstdio>
+#include <stdexcept>
+
+namespace live2d {
+
+void WarpDeformer::read(BinaryReader& br) {
+    Deformer::read(br);
+    mCol = br.readInt32();
+    mRow = br.readInt32();
+    mPivotMgr = br.readObject<PivotManager*>();
+    mPivotPoints = br.readObject<std::vector<std::vector<float>>>();
+    Deformer::readOpacity(br);
+}
+
+DeformerContext* WarpDeformer::init(ModelContext* mc) {
+    (void)mc;
+    return new WarpContext(this);
+}
+
+void WarpDeformer::setupInterpolate(ModelContext* mc, DeformerContext* dc) {
+    auto* wctx = static_cast<WarpContext*>(dc);
+    if (!mPivotMgr->checkParamUpdated(mc)) return;
+
+    int pointCount = getPointCount();
+    bool success = false;
+    UtInterpolate::interpolatePoints(mc, mPivotMgr, success, pointCount,
+                                     mPivotPoints, wctx->mInterpolatedPoints, 0, 2);
+    wctx->setOutsideParam(success);
+    interpolateOpacity(mc, mPivotMgr, wctx, success);
+}
+
+bool WarpDeformer::setupTransform(ModelContext* mc, DeformerContext* dc) {
+    auto* wctx = static_cast<WarpContext*>(dc);
+    wctx->setAvailable(true);
+
+    if (!needTransform()) {
+        wctx->setTotalOpacity(wctx->getInterpolatedOpacity());
+    } else {
+        auto* targetId = getTargetId();
+        if (wctx->mTmpDeformerIndex == DEFORMER_INDEX_NOT_INIT)
+            wctx->mTmpDeformerIndex = mc->getDeformerIndex(targetId);
+
+        if (wctx->mTmpDeformerIndex < 0) {
+            printf("deformer is not reachable\n");
+            wctx->setAvailable(false);
+        } else {
+            auto* parentDef = mc->getDeformer(wctx->mTmpDeformerIndex);
+            auto* parentCtx = mc->getDeformerContext(wctx->mTmpDeformerIndex);
+            if (parentDef && parentCtx->isAvailable()) {
+                float ps = parentCtx->getTotalScale();
+                wctx->setTotalScale_notForClient(ps);
+                wctx->setTotalOpacity(parentCtx->getTotalOpacity() * wctx->getInterpolatedOpacity());
+                parentDef->transformPoints(mc, parentCtx,
+                    wctx->mInterpolatedPoints, wctx->mTransformedPoints,
+                    getPointCount(), 0, 2);
+                wctx->setAvailable(true);
+            } else {
+                wctx->setAvailable(false);
+            }
+        }
+    }
+    return wctx->isAvailable();
+}
+
+void WarpDeformer::transformPoints(ModelContext* mc, DeformerContext* dc,
+                                   const std::vector<float>& srcPoints,
+                                   std::vector<float>& dstPoints,
+                                   int numPoint, int ptOffset, int ptStep) {
+    auto* wctx = static_cast<WarpContext*>(dc);
+    auto& pivot = !wctx->mTransformedPoints.empty()
+                      ? wctx->mTransformedPoints
+                      : wctx->mInterpolatedPoints;
+    transformPoints_sdk2(srcPoints, dstPoints, numPoint, ptOffset, ptStep,
+                          pivot, mRow, mCol);
+}
+
+// Static grid-based vertex transform (ported 1:1 from Python WarpDeformer)
+void WarpDeformer::transformPoints_sdk2(
+    const std::vector<float>& src, std::vector<float>& dst,
+    int pointCount, int srcOffset, int srcStep,
+    const std::vector<float>& grid, int row, int col) {
+
+    int total = pointCount * srcStep;
+    float aT = 0, aS = 0;
+    float bl = 0, bk_ = 0, bf = 0, be = 0;
+    bool computedExtrap = false;
+
+    for (int ba = srcOffset; ba < total; ba += srcStep) {
+        float a4 = src[ba];
+        float aX = src[ba + 1];
+        float bd = a4 * row;
+        float a7 = aX * col;
+
+        if (bd < 0 || a7 < 0 || row <= bd || col <= a7) {
+            int a1 = row + 1;
+            if (!computedExtrap) {
+                computedExtrap = true;
+                aT = 0.25f * (grid[((0) + (0) * a1) * 2] +
+                              grid[((row) + (0) * a1) * 2] +
+                              grid[((0) + (col) * a1) * 2] +
+                              grid[((row) + (col) * a1) * 2]);
+                aS = 0.25f * (grid[((0) + (0) * a1) * 2 + 1] +
+                              grid[((row) + (0) * a1) * 2 + 1] +
+                              grid[((0) + (col) * a1) * 2 + 1] +
+                              grid[((row) + (col) * a1) * 2 + 1]);
+                float aM = grid[((row) + (col) * a1) * 2] -
+                           grid[((0) + (0) * a1) * 2];
+                float aL = grid[((row) + (col) * a1) * 2 + 1] -
+                           grid[((0) + (0) * a1) * 2 + 1];
+                float bh = grid[((row) + (0) * a1) * 2] -
+                           grid[((0) + (col) * a1) * 2];
+                float bg = grid[((row) + (0) * a1) * 2 + 1] -
+                           grid[((0) + (col) * a1) * 2 + 1];
+                bl = (aM + bh) * 0.5f;
+                bk_ = (aL + bg) * 0.5f;
+                bf = (aM - bh) * 0.5f;
+                be = (aL - bg) * 0.5f;
+                aT -= 0.5f * (bl + bf);
+                aS -= 0.5f * (bk_ + be);
+            }
+
+            if ((-2 < a4 && a4 < 3) && (-2 < aX && aX < 3)) {
+                // Full extrapolation logic ported 1:1 from Python WarpDeformer
+                if (a4 <= 0) {
+                    if (aX <= 0) {
+                        float a3 = grid[((0) + (0) * a1) * 2];
+                        float a2 = grid[((0) + (0) * a1) * 2 + 1];
+                        float a8 = aT - 2 * bl;
+                        float a6 = aS - 2 * bk_;
+                        float aK = aT - 2 * bf;
+                        float aJ = aS - 2 * be;
+                        float aO = aT - 2 * bl - 2 * bf;
+                        float aN = aS - 2 * bk_ - 2 * be;
+                        float bj = 0.5f * (a4 - (-2));
+                        float bi = 0.5f * (aX - (-2));
+                        if (bj + bi <= 1.0f) {
+                            dst[ba] = aO + (aK - aO) * bj + (a8 - aO) * bi;
+                            dst[ba + 1] = aN + (aJ - aN) * bj + (a6 - aN) * bi;
+                        } else {
+                            dst[ba] = a3 + (a8 - a3) * (1 - bj) + (aK - a3) * (1 - bi);
+                            dst[ba + 1] = a2 + (a6 - a2) * (1 - bj) + (aJ - a2) * (1 - bi);
+                        }
+                    } else if (aX >= 1) {
+                        float aK = grid[((0) + (col) * a1) * 2];
+                        float aJ = grid[((0) + (col) * a1) * 2 + 1];
+                        float aO = aT - 2 * bl + 1 * bf;
+                        float aN = aS - 2 * bk_ + 1 * be;
+                        float a3 = aT + 3 * bf;
+                        float a2 = aS + 3 * be;
+                        float a8 = aT - 2 * bl + 3 * bf;
+                        float a6 = aS - 2 * bk_ + 3 * be;
+                        float bj = 0.5f * (a4 - (-2));
+                        float bi = 0.5f * (aX - (1));
+                        if (bj + bi <= 1.0f) {
+                            dst[ba] = aO + (aK - aO) * bj + (a8 - aO) * bi;
+                            dst[ba + 1] = aN + (aJ - aN) * bj + (a6 - aN) * bi;
+                        } else {
+                            dst[ba] = a3 + (a8 - a3) * (1 - bj) + (aK - a3) * (1 - bi);
+                            dst[ba + 1] = a2 + (a6 - a2) * (1 - bj) + (aJ - a2) * (1 - bi);
+                        }
+                    } else {
+                        int aH = (int)a7;
+                        if (aH == col) aH = col - 1;
+                        float bj = 0.5f * (a4 - (-2));
+                        float bi = a7 - aH;
+                        float bb = aH / (float)col;
+                        float a9 = (aH + 1) / (float)col;
+                        float aK = grid[((0) + (aH) * a1) * 2];
+                        float aJ = grid[((0) + (aH) * a1) * 2 + 1];
+                        float a3 = grid[((0) + (aH + 1) * a1) * 2];
+                        float a2 = grid[((0) + (aH + 1) * a1) * 2 + 1];
+                        float aO = aT - 2 * bl + bb * bf;
+                        float aN = aS - 2 * bk_ + bb * be;
+                        float a8 = aT - 2 * bl + a9 * bf;
+                        float a6 = aS - 2 * bk_ + a9 * be;
+                        if (bj + bi <= 1.0f) {
+                            dst[ba] = aO + (aK - aO) * bj + (a8 - aO) * bi;
+                            dst[ba + 1] = aN + (aJ - aN) * bj + (a6 - aN) * bi;
+                        } else {
+                            dst[ba] = a3 + (a8 - a3) * (1 - bj) + (aK - a3) * (1 - bi);
+                            dst[ba + 1] = a2 + (a6 - a2) * (1 - bj) + (aJ - a2) * (1 - bi);
+                        }
+                    }
+                } else if (a4 >= 1) {
+                    if (aX <= 0) {
+                        float a8 = grid[((row) + (0) * a1) * 2];
+                        float a6 = grid[((row) + (0) * a1) * 2 + 1];
+                        float a3 = aT + 3 * bl;
+                        float a2 = aS + 3 * bk_;
+                        float aO = aT + 1 * bl - 2 * bf;
+                        float aN = aS + 1 * bk_ - 2 * be;
+                        float aK = aT + 3 * bl - 2 * bf;
+                        float aJ = aS + 3 * bk_ - 2 * be;
+                        float bj = 0.5f * (a4 - (1));
+                        float bi = 0.5f * (aX - (-2));
+                        if (bj + bi <= 1.0f) {
+                            dst[ba] = aO + (aK - aO) * bj + (a8 - aO) * bi;
+                            dst[ba + 1] = aN + (aJ - aN) * bj + (a6 - aN) * bi;
+                        } else {
+                            dst[ba] = a3 + (a8 - a3) * (1 - bj) + (aK - a3) * (1 - bi);
+                            dst[ba + 1] = a2 + (a6 - a2) * (1 - bj) + (aJ - a2) * (1 - bi);
+                        }
+                    } else if (aX >= 1) {
+                        float aO = grid[((row) + (col) * a1) * 2];
+                        float aN = grid[((row) + (col) * a1) * 2 + 1];
+                        float aK = aT + 3 * bl + 1 * bf;
+                        float aJ = aS + 3 * bk_ + 1 * be;
+                        float a8 = aT + 1 * bl + 3 * bf;
+                        float a6 = aS + 1 * bk_ + 3 * be;
+                        float a3 = aT + 3 * bl + 3 * bf;
+                        float a2 = aS + 3 * bk_ + 3 * be;
+                        float bj = 0.5f * (a4 - (1));
+                        float bi = 0.5f * (aX - (1));
+                        if (bj + bi <= 1.0f) {
+                            dst[ba] = aO + (aK - aO) * bj + (a8 - aO) * bi;
+                            dst[ba + 1] = aN + (aJ - aN) * bj + (a6 - aN) * bi;
+                        } else {
+                            dst[ba] = a3 + (a8 - a3) * (1 - bj) + (aK - a3) * (1 - bi);
+                            dst[ba + 1] = a2 + (a6 - a2) * (1 - bj) + (aJ - a2) * (1 - bi);
+                        }
+                    } else {
+                        int aH = (int)a7;
+                        if (aH == col) aH = col - 1;
+                        float bj = 0.5f * (a4 - (1));
+                        float bi = a7 - aH;
+                        float bb = aH / (float)col;
+                        float a9 = (aH + 1) / (float)col;
+                        float aO = grid[((row) + (aH) * a1) * 2];
+                        float aN = grid[((row) + (aH) * a1) * 2 + 1];
+                        float a8 = grid[((row) + (aH + 1) * a1) * 2];
+                        float a6 = grid[((row) + (aH + 1) * a1) * 2 + 1];
+                        float aK = aT + 3 * bl + bb * bf;
+                        float aJ = aS + 3 * bk_ + bb * be;
+                        float a3 = aT + 3 * bl + a9 * bf;
+                        float a2 = aS + 3 * bk_ + a9 * be;
+                        if (bj + bi <= 1.0f) {
+                            dst[ba] = aO + (aK - aO) * bj + (a8 - aO) * bi;
+                            dst[ba + 1] = aN + (aJ - aN) * bj + (a6 - aN) * bi;
+                        } else {
+                            dst[ba] = a3 + (a8 - a3) * (1 - bj) + (aK - a3) * (1 - bi);
+                            dst[ba + 1] = a2 + (a6 - a2) * (1 - bj) + (aJ - a2) * (1 - bi);
+                        }
+                    }
+                } else {
+                    // 0 < a4 < 1: in between, handle by Y (row) interpolation
+                    if (aX <= 0) {
+                        int aY = (int)bd;
+                        if (aY == row) aY = row - 1;
+                        float bj = bd - aY;
+                        float bi = 0.5f * (aX - (-2));
+                        float bp = aY / (float)row;
+                        float bo = (aY + 1) / (float)row;
+                        float a8 = grid[((aY) + (0) * a1) * 2];
+                        float a6 = grid[((aY) + (0) * a1) * 2 + 1];
+                        float a3 = grid[((aY + 1) + (0) * a1) * 2];
+                        float a2 = grid[((aY + 1) + (0) * a1) * 2 + 1];
+                        float aO = aT + bp * bl - 2 * bf;
+                        float aN = aS + bp * bk_ - 2 * be;
+                        float aK = aT + bo * bl - 2 * bf;
+                        float aJ = aS + bo * bk_ - 2 * be;
+                        if (bj + bi <= 1.0f) {
+                            dst[ba] = aO + (aK - aO) * bj + (a8 - aO) * bi;
+                            dst[ba + 1] = aN + (aJ - aN) * bj + (a6 - aN) * bi;
+                        } else {
+                            dst[ba] = a3 + (a8 - a3) * (1 - bj) + (aK - a3) * (1 - bi);
+                            dst[ba + 1] = a2 + (a6 - a2) * (1 - bj) + (aJ - a2) * (1 - bi);
+                        }
+                    } else if (aX >= 1) {
+                        int aY = (int)bd;
+                        if (aY == row) aY = row - 1;
+                        float bj = bd - aY;
+                        float bi = 0.5f * (aX - (1));
+                        float bp = aY / (float)row;
+                        float bo = (aY + 1) / (float)row;
+                        float aO = grid[((aY) + (col) * a1) * 2];
+                        float aN = grid[((aY) + (col) * a1) * 2 + 1];
+                        float aK = grid[((aY + 1) + (col) * a1) * 2];
+                        float aJ = grid[((aY + 1) + (col) * a1) * 2 + 1];
+                        float a8 = aT + bp * bl + 3 * bf;
+                        float a6 = aS + bp * bk_ + 3 * be;
+                        float a3 = aT + bo * bl + 3 * bf;
+                        float a2 = aS + bo * bk_ + 3 * be;
+                        if (bj + bi <= 1.0f) {
+                            dst[ba] = aO + (aK - aO) * bj + (a8 - aO) * bi;
+                            dst[ba + 1] = aN + (aJ - aN) * bj + (a6 - aN) * bi;
+                        } else {
+                            dst[ba] = a3 + (a8 - a3) * (1 - bj) + (aK - a3) * (1 - bi);
+                            dst[ba + 1] = a2 + (a6 - a2) * (1 - bj) + (aJ - a2) * (1 - bi);
+                        }
+                    } else {
+                        // Inner case: should not reach here normally
+                        dst[ba] = aT + a4 * bl + aX * bf;
+                        dst[ba + 1] = aS + a4 * bk_ + aX * be;
+                    }
+                }
+            } else {
+                // Far outside: generic formula
+                dst[ba] = aT + a4 * bl + aX * bf;
+                dst[ba + 1] = aS + a4 * bk_ + aX * be;
+            }
+        } else {
+            // Within bounds: bilinear interpolation from grid
+            float bn = bd - std::floor(bd);
+            float bm = a7 - std::floor(a7);
+            int aV = 2 * (static_cast<int>(bd) + static_cast<int>(a7) * (row + 1));
+            if (bn + bm < 1.0f) {
+                dst[ba] = grid[aV] * (1 - bn - bm) + grid[aV + 2] * bn +
+                          grid[aV + 2 * (row + 1)] * bm;
+                dst[ba + 1] = grid[aV + 1] * (1 - bn - bm) + grid[aV + 3] * bn +
+                              grid[aV + 2 * (row + 1) + 1] * bm;
+            } else {
+                dst[ba] = grid[aV + 2 * (row + 1) + 2] * (bn - 1 + bm) +
+                          grid[aV + 2 * (row + 1)] * (1 - bn) + grid[aV + 2] * (1 - bm);
+                dst[ba + 1] = grid[aV + 2 * (row + 1) + 3] * (bn - 1 + bm) +
+                              grid[aV + 2 * (row + 1) + 1] * (1 - bn) +
+                              grid[aV + 3] * (1 - bm);
+            }
+        }
+    }
+}
+
+} // namespace live2d
+
+
